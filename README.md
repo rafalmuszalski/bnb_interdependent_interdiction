@@ -33,14 +33,14 @@ where `PATH_TO_TABLE` is the local path to the instance table.
 For example, while in the `bnb_interdependent_interdiction` folder:
 
 ```shell
-bash run_par.sh CDS_budget/table1.sh
-bash run_par.sh DS_budget/table2.sh
-bash run_par.sh DS_budget/table3.sh
-bash run_par.sh CDS_target/table4.sh
-bash run_par.sh FL/table5.sh
-bash run_par.sh FL/table6.sh
-bash run_par.sh DS_budget/table7.sh
-bash run_par.sh DS_budget/table8.sh
+bash run.sh CDS_budget/table1.sh
+bash run.sh DS_budget/table2.sh
+bash run.sh DS_budget/table3.sh
+bash run.sh CDS_target/table4.sh
+bash run.sh FL/table5.sh
+bash run.sh FL/table6.sh
+bash run.sh DS_budget/table7.sh
+bash run.sh DS_budget/table8.sh
 
 ```
 would run the experiments to generate the eight tables that appear in the paper. 
