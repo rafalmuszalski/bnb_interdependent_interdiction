@@ -11,6 +11,8 @@ from gurobipy import GRB
 
 from .logging_setup import BNB_status_logger
 
+ONE_HOUR = 60*60*1
+
 @dataclass(frozen=True)
 class DefenderCallbackRecord:
     alloc_weight: float
@@ -450,6 +452,10 @@ class ThreeLevelGame:
 
     def solve_protector(self, timelimit:int):
         p_time = perf_counter()
+
+        if timelimit <= 0:
+            raise RuntimeError("Out of time: Terminating")
+        
         self.protector_model.Params.TimeLimit = timelimit
 
         # Array for storing temporary attacks found 
@@ -475,12 +481,15 @@ class ThreeLevelGame:
         p_time = perf_counter() - p_time
         return protection, protector_obj_val, p_time 
 
-    def solve_attacker(self, protector_policy=[], timer=False, timelimit:float = 60*60*1):
+    def solve_attacker(self, protector_policy=[], timer=False, timelimit:float = ONE_HOUR):
         """
         Solves the Attacker-Defender subgame, 
         where the Defender is INDEPENDENT of the protector_policy
         """
         a_time = perf_counter()
+
+        if timelimit < 0:
+            raise RuntimeError("Out of Time: terminating")
      
         # Reset all attacker var bounds, 
         # since those are not managed by the BNB - no harm
