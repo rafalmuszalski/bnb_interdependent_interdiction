@@ -32,10 +32,10 @@ exec > >(tee -a "$master_log") 2>&1
 WORKERS_PER_NODE=$(( N_WORKERS / 2 ))
 
 # Set Gurobi environment variables
-export GUROBI_HOME=~/Software/Gurobi/gurobi1301/linux64
-export PATH=$GUROBI_HOME/bin:$PATH
-export LD_LIBRARY_PATH=$GUROBI_HOME/lib:$LD_LIBRARY_PATH
-export GRB_LICENSE_FILE=$GUROBI_HOME/licenses/gurobi.lic
+# export GUROBI_HOME=~/Software/Gurobi/gurobi1301/linux64
+# export PATH=$GUROBI_HOME/bin:$PATH
+# export LD_LIBRARY_PATH=$GUROBI_HOME/lib:$LD_LIBRARY_PATH
+# export GRB_LICENSE_FILE=$GUROBI_HOME/licenses/gurobi.lic
 
 
 # ---------------------------------------------------------------------------
