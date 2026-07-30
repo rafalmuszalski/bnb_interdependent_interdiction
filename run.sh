@@ -62,6 +62,7 @@ run_one() {
 # Main
 # ---------------------------------------------------------------------------
 echo "========================================"
+echo "Table      : $src"
 echo "Run stamp  : $run_stamp"
 echo "Base dir   : $base_dir"
 echo "Total tasks: $total"

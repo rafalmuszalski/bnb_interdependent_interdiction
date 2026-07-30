@@ -260,9 +260,10 @@ def run_BNB(I:int, J:int, K:int, A:int, b_p:int, b_a:int, strategy_propagation:i
         structure_propagation=structure_propagation,
         seed=seed,
         anti_symmetry=anti_symmetry,
+        timelimit=time_limit
     )
 
-    bnb = BranchAndBound(model, time_limit)
+    bnb = BranchAndBound(model)
     result = bnb.solveBNB()
     plot_colored_graph(result, model)
     return bnb.get_statistics()
@@ -280,7 +281,7 @@ def run_SLURM(V:int, U:int, K:int, R:int, b_p:int, b_a:int, strategy_propagation
         bnb_stats = run_BNB(V, U, K, R, b_p, b_a, strategy_propagation, structure_propagation, seed, anti_symmetry, time_limit)
     except Exception as e:
         err = traceback.format_exc()
-        BNB_status_logger.error(f"BNB failed:\n{err}")
+        BNB_status_logger.error(f"BNB Unexpected uncaught Error:\n{err}")
         bnb_stats["Error"] = repr(e)
         had_error = True
 
