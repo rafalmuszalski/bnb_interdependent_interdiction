@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
-# run_params_parallel_2numa.sh  <script_with_PARAMS.sh>
+# run_params_parallel_2numa.sh  <script_with_PARAMS.sh> [<script_with_PARAMS.sh> ...]
 #
 # Runs N_WORKERS experiments in parallel, distributed evenly across 2 NUMA
 # nodes. Each worker is pinned to a non-overlapping slice of physical cores
 # on its node (no HT siblings used). Tasks are claimed atomically via mkdir
 # so fast workers pick up the slack from slow ones.
+#
+# Multiple tables can be passed; they run one at a time, in order -- the next
+# table only starts once the previous one's workers have all finished. Each
+# table's logs still go under its own <base_dir>/logs/<run_stamp>/, where
+# <base_dir> is derived from that table's own path (e.g. CDS_budget/table1.sh
+# logs to CDS_budget/logs/..., FL/table5.sh logs to FL/logs/...).
 #
 # Config: set N_WORKERS and THREADS_PER_EXP below.
 # Constraint: (N_WORKERS / 2) * THREADS_PER_EXP <= physical cores per NUMA node
@@ -18,15 +24,14 @@ N_WORKERS=4          # must be even (split evenly across 2 NUMA nodes)
 THREADS_PER_EXP=8   # physical cores per worker (no HT siblings)
 
 # ---------------------------------------------------------------------------
-# Args / paths
+# Args
 # ---------------------------------------------------------------------------
-src="${1:?Usage: $0 path/to/script_with_PARAMS.sh}"
-base_dir="${src%%/*}"
-run_stamp=$(date +"%d%b%H%M" | tr '[:upper:]' '[:lower:]')
+(( $# > 0 )) || { echo "Usage: $0 path/to/script_with_PARAMS.sh [path/to/script_with_PARAMS.sh ...]" >&2; exit 1; }
+srcs=("$@")
 
-mkdir -p "$base_dir/logs/$run_stamp"
-master_log="$base_dir/logs/$run_stamp/master.log"
-exec > >(tee -a "$master_log") 2>&1
+# One run_stamp shared across all tables in this batch, so logs from the same
+# invocation are easy to correlate even though each table logs under its own base_dir.
+run_stamp=$(date +"%d%b%H%M" | tr '[:upper:]' '[:lower:]')
 
 (( N_WORKERS % 2 == 0 )) || { echo "ERROR: N_WORKERS must be even." >&2; exit 1; }
 WORKERS_PER_NODE=$(( N_WORKERS / 2 ))
@@ -37,7 +42,6 @@ WORKERS_PER_NODE=$(( N_WORKERS / 2 ))
 # export LD_LIBRARY_PATH=$GUROBI_HOME/lib:$LD_LIBRARY_PATH
 # export GRB_LICENSE_FILE=$GUROBI_HOME/licenses/gurobi.lic
 
-
 # ---------------------------------------------------------------------------
 # Thread environment
 # ---------------------------------------------------------------------------
@@ -46,16 +50,8 @@ export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_TH
 export SLURM_ARRAY_JOB_ID="$run_stamp"
 
 # ---------------------------------------------------------------------------
-# Load PARAMS array
-# ---------------------------------------------------------------------------
-block=$(sed -n '/^PARAMS[[:space:]]*=(/,/^[[:space:]]*)[[:space:]]*$/p' "$src")
-[[ -n "$block" ]] || { echo "ERROR: could not parse PARAMS block from $src" >&2; exit 1; }
-eval "$block"
-total=${#PARAMS[@]}
-[[ $total -gt 0 ]] || { echo "ERROR: PARAMS array is empty after eval" >&2; exit 1; }
-
-# ---------------------------------------------------------------------------
 # Build a CPU set for a specific slice of physical cores on a NUMA node.
+# (Independent of which table is running, so computed once up front.)
 # ---------------------------------------------------------------------------
 cpus_for_numa_slice() {
   local node="$1" offset="$2" count="$3"
@@ -92,104 +88,141 @@ done
 # source .venv/bin/activate
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Per-table run. Executed inside a subshell by the caller so that the exec
+# redirection and trap below stay scoped to this one table and don't leak
+# into the next table's run.
 # ---------------------------------------------------------------------------
-log_dir_for() { echo "$base_dir/logs/$run_stamp/$(printf '%03d' "$1")"; }
+run_table() {
+  local src="$1"
+  local base_dir="${src%%/*}"
 
-run_one() {
-  local task_id="$1" params="$2" numa="$3" cpus="$4" worker_id="$5"
-  local log_dir; log_dir="$(log_dir_for "$task_id")"
-  mkdir -p "$log_dir"
+  mkdir -p "$base_dir/logs/$run_stamp"
+  local master_log="$base_dir/logs/$run_stamp/master.log"
+  exec > >(tee -a "$master_log") 2>&1
 
-  export SLURM_ARRAY_TASK_ID="$task_id"
-  export EXPERIMENT_DIR="$log_dir"
+  # ---- Load PARAMS array ----
+  local block
+  block=$(sed -n '/^PARAMS[[:space:]]*=(/,/^[[:space:]]*)[[:space:]]*$/p' "$src")
+  [[ -n "$block" ]] || { echo "ERROR: could not parse PARAMS block from $src" >&2; exit 1; }
+  local -a PARAMS
+  eval "$block"
+  local total=${#PARAMS[@]}
+  [[ $total -gt 0 ]] || { echo "ERROR: PARAMS array is empty after eval" >&2; exit 1; }
 
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ▶ worker $worker_id | task $task_id of $total | NUMA $numa | cpus: $cpus"
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] params: $params"
+  # ---- Helpers (need base_dir/run_stamp/total/PARAMS in scope) ----
+  log_dir_for() { echo "$base_dir/logs/$run_stamp/$(printf '%03d' "$1")"; }
 
-  numactl --physcpubind="$cpus" --cpunodebind="$numa" --membind="$numa" \
-    python -m "$base_dir.main" $params \
-    >| "$log_dir/stdout.log" \
-    2>| "$log_dir/stderr.log" \
-  && echo "[$(date '+%Y-%m-%d %H:%M:%S')] worker $worker_id : task $task_id done" \
-  || {
-    local rc=$?
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ task $task_id failed (rc=$rc)"
-    touch "$log_dir/.failed"
+  run_one() {
+    local task_id="$1" params="$2" numa="$3" cpus="$4" worker_id="$5"
+    local log_dir; log_dir="$(log_dir_for "$task_id")"
+    mkdir -p "$log_dir"
+
+    export SLURM_ARRAY_TASK_ID="$task_id"
+    export EXPERIMENT_DIR="$log_dir"
+
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ▶ worker $worker_id | task $task_id of $total | NUMA $numa | cpus: $cpus"
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] params: $params"
+
+    numactl --physcpubind="$cpus" --cpunodebind="$numa" --membind="$numa" \
+      python -m "$base_dir.main" $params \
+      >| "$log_dir/stdout.log" \
+      2>| "$log_dir/stderr.log" \
+    && echo "[$(date '+%Y-%m-%d %H:%M:%S')] worker $worker_id : task $task_id done" \
+    || {
+      local rc=$?
+      echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ task $task_id failed (rc=$rc)"
+      touch "$log_dir/.failed"
+    }
   }
-}
 
-# Claim the next available task using atomic mkdir.
-# Pre-created claim dirs act as tickets; mkdir succeeds for exactly one worker.
-# Returns the task id via stdout, or returns 1 if nothing left to claim.
-claim_next_task() {
-  local claim_dir="$base_dir/logs/$run_stamp/.claims"
-  for (( tid = 0; tid < total; tid++ )); do
-    if mkdir "$claim_dir/$(printf '%03d' "$tid")" 2>/dev/null; then
-      echo "$tid"
-      return 0
-    fi
-  done
-  return 1
-}
+  # Claim the next available task using atomic mkdir.
+  # Pre-created claim dirs act as tickets; mkdir succeeds for exactly one worker.
+  # Returns the task id via stdout, or returns 1 if nothing left to claim.
+  claim_next_task() {
+    local claim_dir="$base_dir/logs/$run_stamp/.claims"
+    for (( tid = 0; tid < total; tid++ )); do
+      if mkdir "$claim_dir/$(printf '%03d' "$tid")" 2>/dev/null; then
+        echo "$tid"
+        return 0
+      fi
+    done
+    return 1
+  }
 
-# Each worker claims and runs tasks until none are left.
-run_queue() {
-  local worker_id="$1" numa="$2" cpus="$3"
-  local tid
-  while tid=$(claim_next_task); do
-    run_one "$tid" "${PARAMS[$tid]}" "$numa" "$cpus" "$worker_id"
+  # Each worker claims and runs tasks until none are left.
+  run_queue() {
+    local worker_id="$1" numa="$2" cpus="$3"
+    local tid
+    while tid=$(claim_next_task); do
+      run_one "$tid" "${PARAMS[$tid]}" "$numa" "$cpus" "$worker_id"
+    done
+  }
+
+  # ---- Main ----
+  echo "========================================"
+  echo "Table          : $src"
+  echo "Run stamp      : $run_stamp"
+  echo "Base dir       : $base_dir"
+  echo "Total tasks    : $total"
+  echo "Workers        : $N_WORKERS ($WORKERS_PER_NODE per NUMA node)"
+  echo "Threads/worker : $THREADS_PER_EXP"
+  for (( w = 0; w < N_WORKERS; w++ )); do
+    numa=$(( w / WORKERS_PER_NODE ))
+    printf "  worker %d -> NUMA %d  cpus: %s\n" "$w" "$numa" "${CPUSETS[$w]}"
   done
+  echo "========================================"
+
+  # Trap Ctrl+C or kill -> tear down all worker children cleanly
+  trap '
+    echo ""
+    echo "Caught signal — killing all workers..."
+    kill -- -$(ps -o pgid= -p $$ | tr -d " ") 2>/dev/null
+    exit 1
+  ' INT TERM
+
+  # Initialise claims directory
+  mkdir -p "$base_dir/logs/$run_stamp/.claims"
+
+  # Launch all workers in parallel, collect PIDs
+  local -a pids
+  for (( w = 0; w < N_WORKERS; w++ )); do
+    numa=$(( w / WORKERS_PER_NODE ))
+    run_queue "$w" "$numa" "${CPUSETS[$w]}" &
+    pids[$w]=$!
+  done
+
+  # Join all workers (this table's tasks must all finish before we return,
+  # which is what makes the next table wait its turn in the outer loop)
+  for (( w = 0; w < N_WORKERS; w++ )); do
+    wait "${pids[$w]}" || true
+  done
+
+  # Count failures via marker files
+  local fail=0
+  while IFS= read -r -d '' _; do
+    (( fail++ )) || true
+  done < <(find "$base_dir/logs/$run_stamp" -name '.failed' -print0 2>/dev/null)
+
+  echo "========================================"
+  echo "Done.  Failures: $fail / $total"
+  echo "Logs : $base_dir/logs/$run_stamp/"
+  echo "========================================"
+  (( fail == 0 ))
 }
 
 # ---------------------------------------------------------------------------
-# Main
+# Run each table in sequence -- next one only starts once the previous one's
+# workers have all joined. Each runs in its own subshell so exec redirection
+# and the signal trap stay scoped to that table.
 # ---------------------------------------------------------------------------
-echo "========================================"
-echo "Table          : $src"
-echo "Run stamp      : $run_stamp"
-echo "Base dir       : $base_dir"
-echo "Total tasks    : $total"
-echo "Workers        : $N_WORKERS ($WORKERS_PER_NODE per NUMA node)"
-echo "Threads/worker : $THREADS_PER_EXP"
-for (( w = 0; w < N_WORKERS; w++ )); do
-  numa=$(( w / WORKERS_PER_NODE ))
-  printf "  worker %d -> NUMA %d  cpus: %s\n" "$w" "$numa" "${CPUSETS[$w]}"
-done
-echo "========================================"
-
-# Trap Ctrl+C or kill -> tear down all worker children cleanly
-trap '
-  echo ""
-  echo "Caught signal — killing all workers..."
-  kill -- -$(ps -o pgid= -p $$ | tr -d " ") 2>/dev/null
-  exit 1
-' INT TERM
-
-# Initialise claims directory
-mkdir -p "$base_dir/logs/$run_stamp/.claims"
-
-# Launch all workers in parallel, collect PIDs
-declare -a pids
-for (( w = 0; w < N_WORKERS; w++ )); do
-  numa=$(( w / WORKERS_PER_NODE ))
-  run_queue "$w" "$numa" "${CPUSETS[$w]}" &
-  pids[$w]=$!
+overall_fail=0
+for src in "${srcs[@]}"; do
+  if ! ( run_table "$src" ); then
+    overall_fail=1
+  fi
 done
 
-# Join all workers
-for (( w = 0; w < N_WORKERS; w++ )); do
-  wait "${pids[$w]}" || true
-done
-
-# Count failures via marker files
-fail=0
-while IFS= read -r -d '' _; do
-  (( fail++ )) || true
-done < <(find "$base_dir/logs/$run_stamp" -name '.failed' -print0 2>/dev/null)
-
 echo "========================================"
-echo "Done.  Failures: $fail / $total"
-echo "Logs : $base_dir/logs/$run_stamp/"
+echo "All tables complete. Overall result: $([[ $overall_fail -eq 0 ]] && echo PASS || echo FAIL)"
 echo "========================================"
-(( fail == 0 ))
+exit "$overall_fail"
