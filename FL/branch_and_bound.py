@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, List
 
 from .logging_setup import BNB_status_logger, BNB_details_logger
-from .model import ThreeLevelGame, TimeLimitExceeded
+from .model import ThreeLevelGame, TimeLimitExceeded, EarlyProtectorTermination
 
 
 @dataclass
@@ -106,8 +106,8 @@ class BranchAndBound:
             f"Defender Allocation: y_(i,j) {node.allocation}\n"
             f"Defender Location z_(i,k): {node.location}\n"
             f"Interdependency: {node.interdependency}\n"
-            f"Crews Patroling: {[k for (a,k) in node.policy]}\n"
-            f"Crews Stationed: {[k for (i,k) in node.location]} \n"
+            f"Crews Patroling: {[k for (a,k) in node.policy] if node.policy is not None else None }\n"
+            f"Crews Stationed: {[k for (i,k) in node.location] if node.location is not None else None} \n"
             f"Node Value: {node.objective_value}, Node Status: {node.status}\n"
             f"Decision Var: {node.decision_var}, Fix: {node.decision_var_fix},"
             f" Parent: {node.parent}\n"
@@ -119,6 +119,7 @@ class BranchAndBound:
         (hname, hpolicy, hattack, hdefender_allocation, hdefender_location, hdefender_weight, h_time) = self.delayed_log_of_heuristic_solution
         if hdefender_weight > self.lower_bound + self.epsilon:
             self.lower_bound = hdefender_weight
+            self.model.LB = hdefender_weight
             self.lower_bound_node_name = "Heuristic"
             self.best_feasible_solution = (hdefender_weight, hpolicy, hattack, hdefender_allocation, hdefender_location)
 
@@ -435,14 +436,18 @@ class BranchAndBound:
         # fix propagated critical strategies identified in previous nodes
         self.set_propagated_critical_strategies(node)
 
-        # Solve the full 3-level model
-        (
-            node.policy,
-            node.strategy,
-            node.allocation,
-            node.location,
-            node.objective_value
-        ) = self.model.solve_three_level_game()
+        try:
+            # Solve the full 3-level model
+            (
+                node.policy,
+                node.strategy,
+                node.allocation,
+                node.location,
+                node.objective_value
+            ) = self.model.solve_three_level_game()
+        except EarlyProtectorTermination as e:
+            node.objective_value = e.ub
+            node.status = "kill"
 
         # unfix propagated critical structures identified in previous nodes
         self.set_propagated_critical_structures(node, action="restrict")
@@ -450,8 +455,11 @@ class BranchAndBound:
         if node.name == 0 and self.model.root_heuristic:
             self.delayed_log_of_heuristic_solution = self.model.root_heuristic
 
+        if node.status == "kill":
+            pass
+        
         # Infeasibility, no DS was found
-        if node.objective_value > self.model.M:
+        elif node.objective_value > self.model.M:
             node.status = "infea"
 
         # w intersects y is non-empty (fractional solution)
@@ -469,6 +477,7 @@ class BranchAndBound:
             node.status = 'int'
             if node.objective_value > self.lower_bound: # New lower bound
                 self.lower_bound = node.objective_value
+                self.model.LB = node.objective_value
                 self.lower_bound_node_name = node.name
                 self.best_feasible_solution = (node.objective_value, node.policy, node.strategy, node.allocation, node.location)
         

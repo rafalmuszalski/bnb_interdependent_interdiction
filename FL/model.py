@@ -11,6 +11,13 @@ from gurobipy import GRB
 
 from .logging_setup import BNB_status_logger
 
+class EarlyProtectorTermination(Exception):
+    """
+    In a given BNB node, the protector objective bound is worse that a BNB incumbent solution. So we can kill searching this node
+    """
+    def __init__(self, ub:float, message="Protector Terminating Early, P.UB >= BnB.LB"):
+        self.ub = ub
+        super().__init__(f"{message} (P.UB={ub})")
 
 class TimeLimitExceeded(Exception):
     pass
@@ -81,7 +88,10 @@ class ThreeLevelGame:
             self.facility_to_survivor_map,
             self.survivor_to_facilities_map
         ) = self.compute_filtered_distances_per_survivor(self.facility_locations, self.survivor_locations, num_excluded=1)
-        
+
+        self.LB = -self.M
+
+
         # ----- Statistics -----
         self.D_calls = 0
         self.A_calls = 0
@@ -224,6 +234,7 @@ class ThreeLevelGame:
     # -------------------------------------------------------------------------
     def init_defender_model(self):
         m = gp.Model("Defender", env=self.env)
+        m.Params.MIPGap = 1e-8
  
         # ------- Decision Variables -------
         # Allocation Variables
@@ -354,8 +365,7 @@ class ThreeLevelGame:
         x_sol = self.attacker_model.cbGetSolution(self.x_vars)
         attack = [(i,j) for (i,j) in self.edges if x_sol[i,j] > 0.5]
 
-        remaining = self.get_time_remaining()
-        if remaining <= 0:
+        if self.get_time_remaining() <= 0:
             raise TimeLimitExceeded("Out of time inside attacker callback")
 
         # Solve defender response given the attack strategy
@@ -379,40 +389,43 @@ class ThreeLevelGame:
                 self._seen_structures.add(candidate)
 
     def cut_crit_attack_callback(self, protector_model:gp.Model, where:int, timer:bool):
-        if where != GRB.Callback.MIPSOL:
-            return
-        
-        self.A_calls += 1 
-        w_sol = protector_model.cbGetSolution(self.w_vars)
-        protection = [(a,k) for a in self.regions for k in self.crews if w_sol[a,k] > 0.5]
+        if where == GRB.Callback.MIP:
+            best_bound = protector_model.cbGet(gp.GRB.Callback.MIP_OBJBND)
+            if best_bound <= self.LB:
+                self.protector_model.terminate()
+                
 
-        remaining = self.get_time_remaining()
-        if remaining <= 0:
-            raise TimeLimitExceeded("Out of time inside protector callback")
+        if where == GRB.Callback.MIPSOL:
+            self.A_calls += 1 
+            w_sol = protector_model.cbGetSolution(self.w_vars)
+            protection = [(a,k) for a in self.regions for k in self.crews if w_sol[a,k] > 0.5]
 
-        attack, attacker_obj_val, a_time = self.solve_attacker(protector_policy=protection, timer=timer)
-        if timer: self.time_solving_attacker += a_time
+            if self.get_time_remaining() <= 0:
+                raise TimeLimitExceeded("Out of time inside protector callback")
 
-        # For the given protection, the resulting attack causes Aid-delivery to be worse (lower)
-        # than what the protector thought. This is a critical attack that needs to be added
-        # so the protector can protect against it. 
-        if attacker_obj_val < protector_model.cbGet(GRB.Callback.MIPSOL_OBJ):
-            self.num_critical_strategies_added += 1 
+            attack, attacker_obj_val, a_time = self.solve_attacker(protector_policy=protection, timer=timer)
+            if timer: self.time_solving_attacker += a_time
 
-            # Region that must be covered to block critical attack 
-            must_cover_regions = set()
-            for (_,j) in attack:
-                must_cover_regions |= {self.survivor_to_region_map[j]}
+            # For the given protection, the resulting attack causes Aid-delivery to be worse (lower)
+            # than what the protector thought. This is a critical attack that needs to be added
+            # so the protector can protect against it. 
+            if attacker_obj_val < protector_model.cbGet(GRB.Callback.MIPSOL_OBJ):
+                self.num_critical_strategies_added += 1 
 
-            protector_model.cbLazy(
-                self.pi_var <= attacker_obj_val + self.M*gp.quicksum(self.w_vars[a,k] for a in must_cover_regions for k in self.crews)
-            )
+                # Region that must be covered to block critical attack 
+                must_cover_regions = set()
+                for (_,j) in attack:
+                    must_cover_regions |= {self.survivor_to_region_map[j]}
 
-            #Store Critical Strategies for Propagation Later
-            candidate = tuple(attack)
-            if candidate not in self._seen_strategies:
-                self.local_critical_strategies.append((attacker_obj_val, attack))
-                self._seen_strategies.add(candidate)
+                protector_model.cbLazy(
+                    self.pi_var <= attacker_obj_val + self.M*gp.quicksum(self.w_vars[a,k] for a in must_cover_regions for k in self.crews)
+                )
+
+                #Store Critical Strategies for Propagation Later
+                candidate = tuple(attack)
+                if candidate not in self._seen_strategies:
+                    self.local_critical_strategies.append((attacker_obj_val, attack))
+                    self._seen_strategies.add(candidate)
 
     # -------------------------------------------------------------------------
     # Cut Propagation
@@ -479,12 +492,10 @@ class ThreeLevelGame:
         elif self.protector_model.Status == GRB.INFEASIBLE:
             protection = []
             protector_obj_val = self.M
-        elif self.protector_model.Status in (GRB.TIME_LIMIT, GRB.INTERRUPTED):
-            # TIME_LIMIT: this solve itself ran out of time.
-            # INTERRUPTED: a nested solve deeper in the callback chain raised TimeLimitExceeded.
-            # Gurobi swallows exceptions raised inside callbacks and just terminates this model
-            # instead (status becomes INTERRUPTED) -- re-raise here to relay the timeout upward.
+        elif self.protector_model.Status == GRB.TIME_LIMIT:
             raise TimeLimitExceeded("TimeLimit reached in Protector Model Solving.")
+        elif self.protector_model.Status == GRB.INTERRUPTED:
+            raise EarlyProtectorTermination(self.protector_model.ObjBound)
         else:
             raise ValueError(f"Unexpected Protector Model Status: {self.protector_model.Status}")
         
@@ -530,8 +541,7 @@ class ThreeLevelGame:
 
         status = self.attacker_model.Status
         if status in (GRB.TIME_LIMIT, GRB.INTERRUPTED):
-            # Same relay logic as solve_protector -- see comment there.
-            raise TimeLimitExceeded("TimeLimit reached in Attacker Model Solving.")
+            raise TimeLimitExceeded("TimeLimit reached while solving A-D game.")
         elif status != GRB.OPTIMAL:
             raise ValueError(f"Unexpected attacker model status: {status}")
 
@@ -574,10 +584,6 @@ class ThreeLevelGame:
         """
         d_time = perf_counter()
 
-        remaining = self.get_time_remaining()
-        if remaining <= 0:
-            raise TimeLimitExceeded("Out of time in solve_defender")
-
         # Reset defender variable bounds (y,z)
         # NOTE: No! These bounds are managed by the bnb branching decisions.
         # You cannot reset them here. 
@@ -590,6 +596,7 @@ class ThreeLevelGame:
         self.defender_model.update()
 
         # Solve the model
+        remaining = self.get_time_remaining()
         self.defender_model.Params.TimeLimit = remaining
         self.defender_model.optimize()
 
@@ -603,10 +610,9 @@ class ThreeLevelGame:
             location = []
             defender_obj_val = self.M
         elif self.defender_model.Status == GRB.TIME_LIMIT:
-            raise TimeLimitExceeded("TimeLimit reached in Defender Model Solving.")
+            raise TimeLimitExceeded("TimeLimit reached while solving Defender.")
         else:
             raise ValueError(f"Unexpected Defender Model Status: {self.defender_model.Status}")
-
      
         # Reset Attacker Strategy on Defender
         for (i,j) in attacker_strategy:
