@@ -8,9 +8,10 @@
 #
 # Multiple tables can be passed; they run one at a time, in order -- the next
 # table only starts once the previous one's workers have all finished. Each
-# table's logs still go under its own <base_dir>/logs/<run_stamp>/, where
-# <base_dir> is derived from that table's own path (e.g. CDS_budget/table1.sh
-# logs to CDS_budget/logs/..., FL/table5.sh logs to FL/logs/...).
+# table gets its own fresh timestamp when its turn starts, and logs go under
+# <base_dir>/logs/<run_stamp>/, where <base_dir> is derived from that table's
+# own path (e.g. CDS_budget/table1.sh logs to CDS_budget/logs/..., FL/table5.sh
+# logs to FL/logs/...).
 #
 # Config: set N_WORKERS and THREADS_PER_EXP below.
 # Constraint: (N_WORKERS / 2) * THREADS_PER_EXP <= physical cores per NUMA node
@@ -29,10 +30,6 @@ THREADS_PER_EXP=8   # physical cores per worker (no HT siblings)
 (( $# > 0 )) || { echo "Usage: $0 path/to/script_with_PARAMS.sh [path/to/script_with_PARAMS.sh ...]" >&2; exit 1; }
 srcs=("$@")
 
-# One run_stamp shared across all tables in this batch, so logs from the same
-# invocation are easy to correlate even though each table logs under its own base_dir.
-run_stamp=$(date +"%d%b%H%M" | tr '[:upper:]' '[:lower:]')
-
 (( N_WORKERS % 2 == 0 )) || { echo "ERROR: N_WORKERS must be even." >&2; exit 1; }
 WORKERS_PER_NODE=$(( N_WORKERS / 2 ))
 
@@ -47,7 +44,6 @@ WORKERS_PER_NODE=$(( N_WORKERS / 2 ))
 # ---------------------------------------------------------------------------
 export GRB_THREADS="$THREADS_PER_EXP"
 export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
-export SLURM_ARRAY_JOB_ID="$run_stamp"
 
 # ---------------------------------------------------------------------------
 # Build a CPU set for a specific slice of physical cores on a NUMA node.
@@ -95,6 +91,10 @@ done
 run_table() {
   local src="$1"
   local base_dir="${src%%/*}"
+  # Fresh timestamp for this table, taken when it actually starts (not when
+  # the script was launched), so back-to-back tables never share a stamp.
+  local run_stamp; run_stamp=$(date +"%d%b%H%M" | tr '[:upper:]' '[:lower:]')
+  export SLURM_ARRAY_JOB_ID="$run_stamp"
 
   mkdir -p "$base_dir/logs/$run_stamp"
   local master_log="$base_dir/logs/$run_stamp/master.log"
