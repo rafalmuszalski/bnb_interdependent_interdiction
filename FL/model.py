@@ -43,7 +43,7 @@ class ThreeLevelGame:
         self.seed = seed
         self.M = 1e6
         self.epsilon = 1e-3
-        self.timeout = False
+        self._out_of_time = False
         self.distance_penalty = 1e3 
         random.seed(self.seed)
         self.timelimit = timelimit
@@ -365,11 +365,12 @@ class ThreeLevelGame:
         x_sol = self.attacker_model.cbGetSolution(self.x_vars)
         attack = [(i,j) for (i,j) in self.edges if x_sol[i,j] > 0.5]
 
-        if self.get_time_remaining() <= 0:
-            raise TimeLimitExceeded("Out of time inside attacker callback")
-
         # Solve defender response given the attack strategy
-        allocation_sol, location_sol, obj_val, d_time = self.solve_defender(attacker_strategy = attack)
+        allocation_sol, location_sol, obj_val, d_time = self.solve_defender(attacker_strategy = attack, in_callback=True)
+        if self._out_of_time:
+            attacker_model.terminate()
+            return 
+        
         if timer: self.time_solving_defender += d_time
 
         # If defender's response is too good, add a lazy constraint to cut it off
@@ -400,10 +401,11 @@ class ThreeLevelGame:
             w_sol = protector_model.cbGetSolution(self.w_vars)
             protection = [(a,k) for a in self.regions for k in self.crews if w_sol[a,k] > 0.5]
 
-            if self.get_time_remaining() <= 0:
-                raise TimeLimitExceeded("Out of time inside protector callback")
-
-            attack, attacker_obj_val, a_time = self.solve_attacker(protector_policy=protection, timer=timer)
+            attack, attacker_obj_val, a_time = self.solve_attacker(protector_policy=protection, timer=timer, in_callback=True)
+            if self._out_of_time:
+                protector_model.terminate()
+                return 
+            
             if timer: self.time_solving_attacker += a_time
 
             # For the given protection, the resulting attack causes Aid-delivery to be worse (lower)
@@ -485,6 +487,9 @@ class ThreeLevelGame:
         self.local_critical_strategies = []
 
         self.protector_model.optimize(lambda model, where: self.cut_crit_attack_callback(model, where, timer=True))
+
+        if self._out_of_time:
+            raise TimeLimitExceeded("TimeLimit reached in Protector Model Solving.")
         
         if self.protector_model.Status == GRB.OPTIMAL:
             protection = [(a, k) for a in self.regions for k in self.crews if self.w_vars[a, k].x > 0.5]
@@ -506,17 +511,13 @@ class ThreeLevelGame:
         p_time = perf_counter() - p_time
         return protection, protector_obj_val, p_time 
 
-    def solve_attacker(self, protector_policy=[], timer=False):
+    def solve_attacker(self, protector_policy=[], timer=False, in_callback: bool = False):
         """
         Solves the Attacker-Defender subgame, 
         where the Defender is INDEPENDENT of the protector_policy
         """
         a_time = perf_counter()
 
-        remaining = self.get_time_remaining()
-        if remaining <= 0:
-            raise TimeLimitExceeded("Out of time before attacker solve")
-     
         # Reset all attacker var bounds, 
         # since those are not managed by the BNB - no harm
         for (i,j) in self.edges:
@@ -536,12 +537,35 @@ class ThreeLevelGame:
 
         self.policy_local_critical_structures = []
 
+        remaining = self.get_time_remaining()
+        if remaining <= 0 and in_callback:
+            self._out_of_time = True
+            BNB_status_logger.info(f"timeout in solve attacker while in_callback={in_callback}")
+            return None, None, None
+
+        if remaining <=0 and not in_callback:
+            self._out_of_time = True
+            BNB_status_logger.info(f"timeout in solve attacker while in_callback={in_callback}")
+            raise TimeLimitExceeded("Out of time before attacker solve")
+        
         self.attacker_model.Params.TimeLimit = remaining
         self.attacker_model.optimize(lambda model, where: self.cut_crit_struct_callback(model,where,timer))
 
+        if self._out_of_time and in_callback:
+            return None, None, None
+        if self._out_of_time and not in_callback:
+            raise TimeLimitExceeded("Out of time before attacker solve")
+
         status = self.attacker_model.Status
-        if status in (GRB.TIME_LIMIT, GRB.INTERRUPTED):
+        if status == GRB.TIME_LIMIT and in_callback:
+            self._out_of_time = True
+            BNB_status_logger.info(f"timeout in solve attacker while in_callback={in_callback}")
+            return None, None, None
+        if status == GRB.TIME_LIMIT and not in_callback:
+            self._out_of_time = True
+            BNB_status_logger.info(f"timeout in solve attacker while in_callback={in_callback}")
             raise TimeLimitExceeded("TimeLimit reached while solving A-D game.")
+        
         elif status != GRB.OPTIMAL:
             raise ValueError(f"Unexpected attacker model status: {status}")
 
@@ -549,7 +573,10 @@ class ThreeLevelGame:
         attack = [(i,j) for (i,j) in self.edges if self.x_vars[i,j].x > 0.5]
         attacker_obj_val = self.attacker_model.ObjVal
 
-        allocation, location, defender_obj_val, d_time = self.solve_defender(attacker_strategy=attack)
+        allocation, location, defender_obj_val, d_time = self.solve_defender(attacker_strategy=attack, in_callback=in_callback)
+        if self._out_of_time and in_callback:
+            self.attacker_model.terminate()
+            return None, None, None
 
         spread = abs(defender_obj_val - attacker_obj_val)
         if spread > self.epsilon:
@@ -577,7 +604,7 @@ class ThreeLevelGame:
         a_time = perf_counter() - a_time
         return attack, attacker_obj_val, a_time
 
-    def solve_defender(self, attacker_strategy):
+    def solve_defender(self, attacker_strategy, in_callback: bool = False):
         """
         Solves the INDEPENDENT relaxation. 
         The defender is NOT influenced by protector policy
@@ -610,7 +637,12 @@ class ThreeLevelGame:
             location = []
             defender_obj_val = self.M
         elif self.defender_model.Status == GRB.TIME_LIMIT:
-            raise TimeLimitExceeded("TimeLimit reached while solving Defender.")
+            self._out_of_time = True
+            BNB_status_logger.info(f"timeout in solve attacker while in_callback={in_callback}")
+            if in_callback:
+                return None, None, None, None
+            else:
+                raise TimeLimitExceeded("TimeLimit reached while solving Defender.")
         else:
             raise ValueError(f"Unexpected Defender Model Status: {self.defender_model.Status}")
      
