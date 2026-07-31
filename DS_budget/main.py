@@ -183,9 +183,10 @@ def run_BNB(n: int, k: int, b_p: int, b_a: int, strategy_propagation: int,
         protected_by=protected_by,
         protectors_of=protectors_of,
         seed=seed,
+        timelimit=time_limit,
     )
 
-    bnb = BranchAndBound(model, time_limit)
+    bnb = BranchAndBound(model)
     result = bnb.solveBNB()
     plot_colored_graph(G, protected_by, result[1], result[2], result[3], name="BNB")
     return bnb.get_statistics()
