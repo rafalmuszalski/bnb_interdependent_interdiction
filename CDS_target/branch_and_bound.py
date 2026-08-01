@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, List
 
 from .logging_setup import BNB_status_logger, BNB_details_logger
-from .model import ThreeLevelGame
+from .model import ThreeLevelGame, TimeLimitExceeded
 
 
 @dataclass
@@ -35,9 +35,8 @@ class Node:
 
 
 class BranchAndBound:
-    def __init__(self, model: ThreeLevelGame, timelimit: int = 60*60*3):
+    def __init__(self, model: ThreeLevelGame):
         self.model = model
-        self.time_limit = timelimit
         self.max_num_nodes = 1e6
         self.epsilon = 1e-5
 
@@ -155,9 +154,6 @@ class BranchAndBound:
             self.gap = (self.upper_bound - self.lower_bound) / self.upper_bound
         else:
             self.gap = float('-inf')
-
-    def get_time_remaining(self):
-        return self.time_limit - (perf_counter() - self.start_time)
 
     def get_statistics(self):
         return {
@@ -405,7 +401,7 @@ class BranchAndBound:
         if self.tree_depth < node.depth + 1:
             self.tree_depth = node.depth + 1
         
-    def process_node(self, node:Node, time_limit:float):
+    def process_node(self, node:Node):
         """Process a single BnB node: reset, branch, solve, classify."""
         
         # Reset MIP tree and solution (does not affect bounds or lazy constraints)
@@ -435,7 +431,7 @@ class BranchAndBound:
             node.structure,
             node.objective_value,
             node.attacker_value
-        ) = self.model.solve_three_level_game(time_limit)
+        ) = self.model.solve_three_level_game()
 
         # unfix propagated critical structures identified in previous nodes
         self.set_propagated_critical_structures(node, action="restrict")
@@ -470,15 +466,15 @@ class BranchAndBound:
     
     def solveBNB(self):
         self.start_time = perf_counter()
-        time_remaining = self.time_limit
 
         while self.node_queue and self.num_nodes < self.max_num_nodes:
             node = heapq.heappop(self.node_queue)
 
             try:
-                self.process_node(node, time_remaining)
-            except RuntimeError:
+                self.process_node(node)
+            except TimeLimitExceeded as e:
                 BNB_status_logger.info("TimeLimit Reached In Node of BNB. Terminating Sub-Optimal")
+                BNB_status_logger.info(e)
                 break
 
             self.update_lb_ub_gap()
@@ -498,9 +494,8 @@ class BranchAndBound:
                 BNB_status_logger.info("Optimality Gap 0%: Terminating Early")
                 break
 
-            time_remaining = self.get_time_remaining()
-            if time_remaining < 0:
-                BNB_status_logger.info(f"TIME LIMIT EXCEEDED: {self.time_limit:.2f} seconds")
+            if self.model.get_time_remaining() <= 0:
+                BNB_status_logger.info(f"TIME LIMIT EXCEEDED: {self.model.timelimit:.2f} seconds")
                 break
 
         self.end_time = perf_counter()
