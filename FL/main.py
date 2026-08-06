@@ -282,6 +282,7 @@ def run_SLURM(V:int, U:int, K:int, R:int, b_p:int, b_a:int, strategy_propagation
     except Exception as e:
         err = traceback.format_exc()
         bnb_stats["Error"] = repr(e)
+        print(err, file=sys.stderr)
 
         if isinstance(e, ValueError) and "17" in str(e):
             had_error = 17

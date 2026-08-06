@@ -233,6 +233,7 @@ def run_SLURM(n: int, k: int, b_p: int, b_a: int, strategy_propagation: int,
     except Exception as e:
         err = traceback.format_exc()
         bnb_stats["Error"] = repr(e)
+        print(err, file=sys.stderr)
 
         if isinstance(e, ValueError) and "17" in str(e):
             had_error = 17
@@ -253,6 +254,7 @@ def run_SLURM(n: int, k: int, b_p: int, b_a: int, strategy_propagation: int,
         except Exception as e:
             err = traceback.format_exc()
             ccg_stats["Error"] = repr(e)
+            print(err, file=sys.stderr)
 
             if isinstance(e, ValueError) and "17" in str(e):
                 had_error = 17
