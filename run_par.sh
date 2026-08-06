@@ -120,19 +120,27 @@ run_table() {
     export SLURM_ARRAY_TASK_ID="$task_id"
     export EXPERIMENT_DIR="$log_dir"
 
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ▶ worker $worker_id | task $task_id of $total | NUMA $numa | cpus: $cpus"
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] params: $params"
+    local ts; ts="$(date '+%Y-%m-%d %H:%M:%S')"
+    echo "[$ts] ▶ worker $worker_id | task $task_id of $total | NUMA $numa | cpus: $cpus"
+    echo "[$ts] params: $params"
 
+    local rc=0
     numactl --physcpubind="$cpus" --cpunodebind="$numa" --membind="$numa" \
       python -m "$base_dir.main" $params \
       >| "$log_dir/stdout.log" \
-      2>| "$log_dir/stderr.log" \
-    && echo "[$(date '+%Y-%m-%d %H:%M:%S')] worker $worker_id : task $task_id done" \
-    || {
-      local rc=$?
-      echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ task $task_id failed (rc=$rc)"
-      touch "$log_dir/.failed"
-    }
+      2>| "$log_dir/stderr.log" || rc=$?
+
+    ts="$(date '+%Y-%m-%d %H:%M:%S')"
+    local msg
+    case "$rc" in
+      0) echo "[$ts] worker $worker_id : task $task_id done"; return ;;
+      1)  msg="❌ worker $worker_id : task $task_id failed — experiment error (rc=1)" ;;
+      17) msg="🧠 worker $worker_id : task $task_id memory limit hit (rc=17)" ;;
+      *)  msg="❌ worker $worker_id : task $task_id crashed unexpectedly (rc=$rc)" ;;
+    esac
+
+    echo "[$ts] $msg, see $log_dir/stderr.log"
+    touch "$log_dir/.failed"
   }
 
   # Claim the next available task using atomic mkdir.

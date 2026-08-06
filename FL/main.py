@@ -274,23 +274,28 @@ def run_BNB(I:int, J:int, K:int, A:int, b_p:int, b_a:int, strategy_propagation:i
 # -------------------------------------------------------------------------
 
 def run_SLURM(V:int, U:int, K:int, R:int, b_p:int, b_a:int, strategy_propagation:int, structure_propagation:int, seed:int, anti_symmetry:bool, time_limit:int):
-    had_error = False 
+    had_error = 0 
     bnb_stats = {}
 
     try:
         bnb_stats = run_BNB(V, U, K, R, b_p, b_a, strategy_propagation, structure_propagation, seed, anti_symmetry, time_limit)
     except Exception as e:
         err = traceback.format_exc()
-        BNB_status_logger.error(f"BNB Unexpected uncaught Error:\n{err}")
         bnb_stats["Error"] = repr(e)
-        had_error = True
+
+        if isinstance(e, ValueError) and "17" in str(e):
+            had_error = 17
+            BNB_status_logger.error(f"BNB MemoryLimit Hit:\n{err}")
+        else:
+            had_error = 1
+            BNB_status_logger.error(f"BNB Unexpected uncaught Error:\n{err}")
 
     # Log SLURM run
     graph_config = {"V":V, "U":U, "K":K, "R":R ,"b_p":b_p,"b_a":b_a,"seed":seed,"structure_propagation":structure_propagation,"strategy_propagation":strategy_propagation,"TimeLimit":time_limit,"Anti-Symmetry":anti_symmetry}
     log_dicts_csv(experiment_logger, experiment_log_path, graph_config, bnb_stats)
 
     if had_error:
-        sys.exit(1)
+        sys.exit(had_error)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

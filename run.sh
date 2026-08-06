@@ -44,18 +44,26 @@ run_one() {
   export SLURM_ARRAY_TASK_ID="$task_id"
   export EXPERIMENT_DIR="$log_dir"
 
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] ▶ task $task_id of $total"
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] params: $params"
+  local ts; ts="$(date '+%Y-%m-%d %H:%M:%S')"
+  echo "[$ts] ▶ task $task_id of $total"
+  echo "[$ts] params: $params"
 
+  local rc=0
   eval python -m "$base_dir.main" $params \
     >| "$log_dir/stdout.log" \
-    2>| "$log_dir/stderr.log" \
-  && echo "[$(date '+%Y-%m-%d %H:%M:%S')] ✓ task $task_id done" \
-  || {
-    local rc=$?
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ task $task_id failed (rc=$rc)"
-    touch "$log_dir/.failed"
-  }
+    2>| "$log_dir/stderr.log" || rc=$?
+
+  ts="$(date '+%Y-%m-%d %H:%M:%S')"
+  local msg
+  case "$rc" in
+    0) echo "[$ts] ✓ task $task_id done"; return ;;
+    1)  msg="❌ task $task_id failed — experiment error (rc=1)" ;;
+    17) msg="🧠 task $task_id memory limit hit (rc=17)" ;;
+    *)  msg="❌ task $task_id crashed unexpectedly (rc=$rc)" ;;
+  esac
+
+  echo "[$ts] $msg, see $log_dir/stderr.log"
+  touch "$log_dir/.failed"
 }
 
 # ---------------------------------------------------------------------------
