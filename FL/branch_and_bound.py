@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional, List
 
 from .logging_setup import BNB_status_logger, BNB_details_logger
-from .model import ThreeLevelGame
+from .model import ThreeLevelGame, TimeLimitExceeded, EarlyProtectorTermination
 
 
 @dataclass
@@ -36,9 +36,8 @@ class Node:
 
 
 class BranchAndBound:
-    def __init__(self, model:ThreeLevelGame, timelimit:int):
+    def __init__(self, model:ThreeLevelGame):
         self.model = model
-        self.time_limit = timelimit
         self.max_num_nodes = 1e6
         self.epsilon = 1e-3
 
@@ -107,8 +106,8 @@ class BranchAndBound:
             f"Defender Allocation: y_(i,j) {node.allocation}\n"
             f"Defender Location z_(i,k): {node.location}\n"
             f"Interdependency: {node.interdependency}\n"
-            f"Crews Patroling: {[k for (a,k) in node.policy]}\n"
-            f"Crews Stationed: {[k for (i,k) in node.location]} \n"
+            f"Crews Patroling: {[k for (a,k) in node.policy] if node.policy is not None else None }\n"
+            f"Crews Stationed: {[k for (i,k) in node.location] if node.location is not None else None} \n"
             f"Node Value: {node.objective_value}, Node Status: {node.status}\n"
             f"Decision Var: {node.decision_var}, Fix: {node.decision_var_fix},"
             f" Parent: {node.parent}\n"
@@ -120,6 +119,7 @@ class BranchAndBound:
         (hname, hpolicy, hattack, hdefender_allocation, hdefender_location, hdefender_weight, h_time) = self.delayed_log_of_heuristic_solution
         if hdefender_weight > self.lower_bound + self.epsilon:
             self.lower_bound = hdefender_weight
+            self.model.LB = hdefender_weight
             self.lower_bound_node_name = "Heuristic"
             self.best_feasible_solution = (hdefender_weight, hpolicy, hattack, hdefender_allocation, hdefender_location)
 
@@ -167,9 +167,6 @@ class BranchAndBound:
             self.gap = (self.upper_bound - self.lower_bound) / self.upper_bound
         else:
             self.gap = float('inf')
-
-    def get_time_remaining(self):
-        return self.time_limit - (perf_counter() - self.start_time)
     
     def get_statistics(self):
         return {
@@ -416,7 +413,7 @@ class BranchAndBound:
         if self.tree_depth < node.depth + 1:
             self.tree_depth = node.depth + 1
 
-    def process_node(self, node:Node, timelimit:float):
+    def process_node(self, node:Node):
         """Process a single BnB node: reset, branch, solve, classify."""
 
         self.model.protector_model.reset(1)
@@ -439,14 +436,18 @@ class BranchAndBound:
         # fix propagated critical strategies identified in previous nodes
         self.set_propagated_critical_strategies(node)
 
-        # Solve the full 3-level model
-        (
-            node.policy,
-            node.strategy,
-            node.allocation,
-            node.location,
-            node.objective_value
-        ) = self.model.solve_three_level_game(timelimit)
+        try:
+            # Solve the full 3-level model
+            (
+                node.policy,
+                node.strategy,
+                node.allocation,
+                node.location,
+                node.objective_value
+            ) = self.model.solve_three_level_game()
+        except EarlyProtectorTermination as e:
+            node.objective_value = e.ub
+            node.status = "kill"
 
         # unfix propagated critical structures identified in previous nodes
         self.set_propagated_critical_structures(node, action="restrict")
@@ -454,8 +455,11 @@ class BranchAndBound:
         if node.name == 0 and self.model.root_heuristic:
             self.delayed_log_of_heuristic_solution = self.model.root_heuristic
 
+        if node.status == "kill":
+            pass
+        
         # Infeasibility, no DS was found
-        if node.objective_value > self.model.M:
+        elif node.objective_value > self.model.M:
             node.status = "infea"
 
         # w intersects y is non-empty (fractional solution)
@@ -473,6 +477,7 @@ class BranchAndBound:
             node.status = 'int'
             if node.objective_value > self.lower_bound: # New lower bound
                 self.lower_bound = node.objective_value
+                self.model.LB = node.objective_value
                 self.lower_bound_node_name = node.name
                 self.best_feasible_solution = (node.objective_value, node.policy, node.strategy, node.allocation, node.location)
         
@@ -482,15 +487,15 @@ class BranchAndBound:
     
     def solveBNB(self):
         self.start_time = perf_counter()
-        time_remaining = self.time_limit
 
         while self.node_queue and self.num_nodes < self.max_num_nodes:
             node = heapq.heappop(self.node_queue)
             
             try:
-                self.process_node(node, time_remaining)
-            except RuntimeError:
+                self.process_node(node)
+            except TimeLimitExceeded as e:
                 BNB_status_logger.info("TimeLimit Reached In Node of BNB. Terminating Sub-Optimal")
+                BNB_status_logger.info(e)
                 break
 
             self.update_lb_ub_gap()
@@ -504,13 +509,12 @@ class BranchAndBound:
                 BNB_status_logger.info(f"Objective value {node.objective_value} is greater than upper bound {self.upper_bound}, Node: {node.name}")
                 raise ValueError("Node Objective Value is greater than upper bound") 
 
-            if self.gap <= 1e-5:
+            if self.gap <= self.epsilon:
                 BNB_status_logger.info("Optimality Gap 0%: Terminating Early")
                 break
 
-            time_remaining = self.get_time_remaining()
-            if time_remaining < 0:
-                BNB_status_logger.info(f"TIME LIMIT EXCEEDED: {self.time_limit:.2f} seconds")
+            if self.model.get_time_remaining() <= 0:
+                BNB_status_logger.info(f"TIME LIMIT EXCEEDED: {self.model.timelimit:.2f} seconds")
                 break
 
         self.end_time = perf_counter()

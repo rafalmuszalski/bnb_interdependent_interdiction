@@ -177,9 +177,10 @@ def run_BNB(n: int, k: int, b_p: int, b_a: int, strategy_propagation: int,
         protected_by=protected_by,
         protectors_of=protectors_of,
         seed=seed,
+        timelimit=time_limit,
     )
 
-    bnb = BranchAndBound(model, time_limit)
+    bnb = BranchAndBound(model)
     result = bnb.solveBNB()
     plot_colored_graph(G, protected_by, result[1], result[2], result[3], name="BNB")
     return bnb.get_statistics()
@@ -191,7 +192,7 @@ def run_BNB(n: int, k: int, b_p: int, b_a: int, strategy_propagation: int,
 def run_SLURM(n: int, k: int, b_p: int, b_a: int, strategy_propagation: int,
               structure_propagation: int, seed: int, time_limit: int):
     
-    had_error = False
+    had_error = 0
     bnb_stats= {}
     
     try:
@@ -206,9 +207,15 @@ def run_SLURM(n: int, k: int, b_p: int, b_a: int, strategy_propagation: int,
                         )
     except Exception as e:
         err = traceback.format_exc()
-        BNB_status_logger.error(f"BNB failed:\n{err}")
         bnb_stats["Error"] = repr(e)
-        had_error = True
+        print(err, file=sys.stderr)
+
+        if isinstance(e, ValueError) and "17" in str(e):
+            had_error = 17
+            BNB_status_logger.error(f"BNB MemoryLimit Hit:\n{err}")
+        else:
+            had_error = 1
+            BNB_status_logger.error(f"BNB Unexpected uncaught Error:\n{err}")
     
     graph_config = {
         "N": n, "K": k, "b_p": b_p, "b_a": b_a, "seed": seed,
@@ -219,7 +226,7 @@ def run_SLURM(n: int, k: int, b_p: int, b_a: int, strategy_propagation: int,
     log_dicts_csv(experiment_logger, experiment_log_path, graph_config, bnb_stats)
 
     if had_error:
-        sys.exit(1)
+        sys.exit(had_error)
 # -------------------------------------------------------------------------
 # CLI
 # -------------------------------------------------------------------------

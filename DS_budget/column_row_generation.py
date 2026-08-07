@@ -323,6 +323,7 @@ class Interdependent_Nested_CnCG:
 
         w_hat = []
         iter = 0
+        self.gap = float('inf')
         start_time = perf_counter()
 
         while True:
