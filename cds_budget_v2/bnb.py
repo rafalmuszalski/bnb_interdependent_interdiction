@@ -20,12 +20,11 @@ from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Optional
 
+from .constants import EPS
 from .model import LimitReached, NodeCutoff, ThreeLevelGame
 
 log = logging.getLogger("bnb")
 node_log = logging.getLogger("nodes")   # one row per processed node, for debugging
-
-EPS = 1e-5
 
 
 @dataclass
@@ -44,7 +43,7 @@ class Node:
 
     def __lt__(self, other: "Node") -> bool:
         """Best-bound first; ties go to the D.Branch (fix=0) child."""
-        if abs(self.bound - other.bound) < 1e-9:
+        if abs(self.bound - other.bound) < EPS:
             return self.branch_fix < other.branch_fix
         return self.bound < other.bound
 

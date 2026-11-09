@@ -18,6 +18,7 @@ from time import perf_counter
 import gurobipy as gp
 from gurobipy import GRB
 
+from .constants import BINARY_THRESHOLD, EPS
 from .instance import Instance
 from .bnb import Solution
 from .model import LimitReached, ThreeLevelGame
@@ -155,7 +156,7 @@ class CCG(ThreeLevelGame):
                          f"{ub:^8g} {gap:^10.5g} {perf_counter() - start:>9.3f}")
 
                 # Converged: the policy's true value matches the master's lower bound
-                if weight <= self.lower_bound + 1e-5:
+                if weight <= self.lower_bound + EPS:
                     self.status = "optimal"
                     break
 
@@ -164,7 +165,7 @@ class CCG(ThreeLevelGame):
                 self.optimize(self.protector_model, "protector")
                 if self.protector_model.Status != GRB.OPTIMAL:
                     raise ValueError(f"Unexpected master problem status: {self.protector_model.Status}")
-                policy = [i for i in self.inst.nodes if self.w[i].X > 0.5]
+                policy = [i for i in self.inst.nodes if self.w[i].X > BINARY_THRESHOLD]
                 self.lower_bound = self.protector_model.ObjVal
                 self.iterations += 1
         except LimitReached as e:

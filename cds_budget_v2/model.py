@@ -4,6 +4,7 @@ from time import perf_counter
 import gurobipy as gp
 from gurobipy import GRB
 
+from .constants import BIG_M, BINARY_THRESHOLD, EPS, SOFT_MEM_LIMIT_GB, THREADS
 from .instance import Instance
 
 
@@ -19,10 +20,10 @@ class NodeCutoff(Exception):
 
 
 class ThreeLevelGame:
-    def __init__(self, inst: Instance, threads: int = 8, soft_mem_limit_gb: float = 16,
+    def __init__(self, inst: Instance, threads: int = THREADS, soft_mem_limit_gb: float = SOFT_MEM_LIMIT_GB,
                  structure_propagation: int = -1, strategy_propagation: int = -1):
         self.inst = inst
-        self.M = 1e5
+        self.M = BIG_M
         self.deadline = float("inf")  # perf_counter() time by which every solve must finish
 
         # Propagation: keep cuts found by the callbacks as permanent constraints.
@@ -222,7 +223,7 @@ class ThreeLevelGame:
             return
 
         x_sol = model.cbGetSolution(self.x)
-        attack = [i for i in self.inst.nodes if x_sol[i] > 0.5]
+        attack = [i for i in self.inst.nodes if x_sol[i] > BINARY_THRESHOLD]
 
         ds, ds_weight = self.solve_defender(attack)
         if ds_weight < model.cbGet(GRB.Callback.MIPSOL_OBJ):
@@ -241,7 +242,7 @@ class ThreeLevelGame:
             return
 
         w_sol = model.cbGetSolution(self.w)
-        policy = [i for i in self.inst.nodes if w_sol[i] > 0.5]
+        policy = [i for i in self.inst.nodes if w_sol[i] > BINARY_THRESHOLD]
 
         attack, attack_value = self.solve_attacker(policy)
         if attack_value > model.cbGet(GRB.Callback.MIPSOL_OBJ):
@@ -308,7 +309,7 @@ class ThreeLevelGame:
         nodes are restored to their previous bound afterwards, not to 1.
         Results are cached by the set of unavailable vertices (attacked or y.UB = 0).
         """
-        unavailable = frozenset(attack) | {i for i in self.inst.nodes if self.y[i].UB < 0.5}
+        unavailable = frozenset(attack) | {i for i in self.inst.nodes if self.y[i].UB < BINARY_THRESHOLD}
         if unavailable in self.defender_cache:
             return self.defender_cache[unavailable]
 
@@ -321,7 +322,7 @@ class ThreeLevelGame:
 
         status = self.defender_model.Status
         if status == GRB.OPTIMAL:
-            ds = [i for i in self.inst.nodes if self.y[i].X > 0.5]
+            ds = [i for i in self.inst.nodes if self.y[i].X > BINARY_THRESHOLD]
             weight = sum(self.inst.weight(i) for i in ds)
         elif status == GRB.INFEASIBLE:
             ds, weight = [], self.M
@@ -348,7 +349,7 @@ class ThreeLevelGame:
         status = self.attacker_model.Status
         if status != GRB.OPTIMAL:
             raise ValueError(f"Unexpected attacker status: {status}")
-        attack = [i for i in self.inst.nodes if self.x[i].X > 0.5]
+        attack = [i for i in self.inst.nodes if self.x[i].X > BINARY_THRESHOLD]
         value = self.attacker_model.ObjVal
 
         for i in self.inst.nodes:
@@ -367,7 +368,7 @@ class ThreeLevelGame:
 
         status = self.protector_model.Status
         if status == GRB.OPTIMAL:
-            policy = [i for i in self.inst.nodes if self.w[i].X > 0.5]
+            policy = [i for i in self.inst.nodes if self.w[i].X > BINARY_THRESHOLD]
             value = self.protector_model.ObjVal
         elif status == GRB.INFEASIBLE:
             policy, value = [], self.M
@@ -392,7 +393,7 @@ class ThreeLevelGame:
         structure, d_value = self.solve_defender(attack)
 
         values = (p_value, a_value, d_value)
-        if max(values) - min(values) > 1e-5:
+        if max(values) - min(values) > EPS:
             raise ValueError(f"Objective mismatch: p={p_value}, a={a_value}, d={d_value}")
 
         return policy, attack, structure, d_value
