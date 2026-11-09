@@ -4,7 +4,7 @@ from time import perf_counter
 import gurobipy as gp
 from gurobipy import GRB
 
-from .constants import BIG_M, BINARY_THRESHOLD, EPS, SOFT_MEM_LIMIT_GB, THREADS
+from .constants import BIG_M, BINARY_THRESHOLD, EPS, GUROBI_SEED, SOFT_MEM_LIMIT_GB, THREADS
 from .instance import Instance
 
 
@@ -48,7 +48,7 @@ class ThreeLevelGame:
 
         self.env = gp.Env(empty=True)
         self.env.setParam("LogToConsole", 0)
-        self.env.setParam("Seed", inst.seed)
+        self.env.setParam("Seed", GUROBI_SEED)
         self.env.setParam("Threads", threads)
         self.env.setParam("SoftMemLimit", soft_mem_limit_gb)
         self.env.start()
