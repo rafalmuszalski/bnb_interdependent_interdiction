@@ -129,6 +129,8 @@ class BranchAndBound:
 
         self.reset_models()
         fortified = self.apply_branching(node)
+        g.set_structure_cuts(blocked=fortified)
+        g.update_strategy_cuts()
 
         node.policy, node.attack, node.structure, node.bound = g.solve_three_level_game()
 
@@ -146,7 +148,7 @@ class BranchAndBound:
         # No overlap, but was the attacker's value right for this policy?
         heuristic_start = perf_counter()
         try:
-            heuristic = self.evaluate_policy(node.policy)
+            heuristic = self.evaluate_policy(node.policy, fortified)
         finally:
             self.heuristic_time += perf_counter() - heuristic_start
         if heuristic.weight > node.bound + EPS:
@@ -223,16 +225,17 @@ class BranchAndBound:
     # Heuristic
     # -------------------------------------------------------------------------
 
-    def evaluate_policy(self, policy: list[int]) -> Solution:
+    def evaluate_policy(self, policy: list[int], fortified: set[int]) -> Solution:
         """
         True value of `policy` in the interdependent game: forbid fortified nodes in the
         DS, then solve A-D. Doesn't touch the incumbent; the caller decides.
-        Leaves y bounds modified; the next node resets them.
+        Leaves y bounds and structure cuts set for this policy; the next node resets them.
         """
         g = self.game
         for i in policy:
             g.y[i].UB = 0
         g.defender_model.update()
+        g.set_structure_cuts(blocked=fortified | set(policy))
 
         attack, value = g.solve_attacker(policy)
         structure, weight = g.solve_defender(attack)

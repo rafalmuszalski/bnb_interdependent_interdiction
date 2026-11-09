@@ -22,8 +22,8 @@ def parse_args():
     p.add_argument("--k",                     type=int,   default=5,   help="Clique size")
     p.add_argument("--b_p",                   type=int,   default=1,   help="Protector budget")
     p.add_argument("--b_a",                   type=int,   default=3,   help="Attacker budget")
-    p.add_argument("--strategy_propagation",  type=int,   default=0,   choices=[-1, 0],    help="Protector constraint propagation type (not used yet)")
-    p.add_argument("--structure_propagation", type=int,   default=1,   choices=[-1, 0, 1], help="Attacker constraint propagation type (not used yet)")
+    p.add_argument("--strategy_propagation",  type=int,   default=0,   choices=[-1, 0],    help="Protector cut propagation (BnB): -1 off, 0 constraint")
+    p.add_argument("--structure_propagation", type=int,   default=1,   choices=[-1, 0, 1], help="Attacker cut propagation (BnB): -1 off, 0 constraint, 1 lazy")
     p.add_argument("--seed",                  type=int,   default=1,   help="Random seed")
     p.add_argument("--time_limit",            type=float, default=60*60*3, help="Time limit in seconds")
     p.add_argument("--bnb_only",              action="store_true",     help="Run only BnB, skip CCG")
@@ -101,6 +101,8 @@ def main():
         "bridges":       args.bridges,
         "seed":          args.seed,
         "time_limit":    args.time_limit,
+        "structure_propagation": args.structure_propagation,
+        "strategy_propagation":  args.strategy_propagation,
         "error":         None,
     }
 
@@ -110,7 +112,9 @@ def main():
         inst = small_world_clique(n=args.n, clique_size=args.k, protectors=args.protectors,
                                   bridges=args.bridges, b_p=args.b_p, b_a=args.b_a, seed=args.seed)
 
-        bnb = BranchAndBound(ThreeLevelGame(inst), time_limit=args.time_limit)
+        game = ThreeLevelGame(inst, structure_propagation=args.structure_propagation,
+                              strategy_propagation=args.strategy_propagation)
+        bnb = BranchAndBound(game, time_limit=args.time_limit)
         sol = bnb.solve()
         print(f"BnB  {bnb.status}  value {sol.weight:g}  policy {sol.policy}  attack {sol.attack}  "
               f"structure {sol.structure}  ({len(bnb.nodes)} nodes, {bnb.time:.1f}s)")

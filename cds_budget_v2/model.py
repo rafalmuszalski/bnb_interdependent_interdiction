@@ -15,10 +15,19 @@ class LimitReached(Exception):
 
 
 class ThreeLevelGame:
-    def __init__(self, inst: Instance, threads: int = 8, soft_mem_limit_gb: float = 16):
+    def __init__(self, inst: Instance, threads: int = 8, soft_mem_limit_gb: float = 16,
+                 structure_propagation: int = -1, strategy_propagation: int = -1):
         self.inst = inst
         self.M = 1e5
         self.deadline = float("inf")  # perf_counter() time by which every solve must finish
+
+        # Propagation: keep cuts found by the callbacks as permanent constraints.
+        #   structure_propagation: -1 = off, 0 = normal constraint, 1 = lazy constraint
+        #   strategy_propagation:  -1 = off, 0 = normal constraint
+        self.structure_propagation = structure_propagation
+        self.strategy_propagation = strategy_propagation
+        self.kept_structures = {}  # frozenset(ds) -> (weight, constr) in the attacker model
+        self.kept_strategies = {}  # frozenset(attack) -> constr in the protector model
 
         # Statistics. Solve times are exclusive: time spent in nested solves (inside a
         # callback) goes to the nested model, not its parent.
@@ -234,6 +243,52 @@ class ThreeLevelGame:
             model.cbLazy(self.pi >= attack_value - self.M * gp.quicksum(self.w[i] for i in cover))
             self.strategies_added += 1
             self.distinct_strategies.add(frozenset(attack))
+            self.new_strategies.append((attack_value, attack))  # kept after the solve, if propagating
+
+    # -------------------------------------------------------------------------
+    # Propagation
+    # -------------------------------------------------------------------------
+
+    def keep_structures(self, structures: list):
+        """Add critical structures to the attacker model as permanent constraints."""
+        for weight, ds in structures:
+            if frozenset(ds) in self.kept_structures:
+                continue
+            constr = self.attacker_model.addConstr(
+                self.alpha <= weight + self.M * gp.quicksum(self.x[i] for i in ds))
+            constr.Lazy = self.structure_propagation
+            self.kept_structures[frozenset(ds)] = (weight, constr)
+        self.attacker_model.update()
+
+    def keep_strategies(self, strategies: list):
+        """Add critical strategies to the protector model as permanent constraints."""
+        for value, attack in strategies:
+            if frozenset(attack) in self.kept_strategies:
+                continue
+            cover = set(attack).union(*(self.inst.protectors_of[i] for i in attack))
+            constr = self.protector_model.addConstr(
+                self.pi >= value - self.M * gp.quicksum(self.w[i] for i in cover))
+            self.kept_strategies[frozenset(attack)] = constr
+        self.protector_model.update()
+
+    def set_structure_cuts(self, blocked: set):
+        """
+        Switch off kept structures that use a vertex the defender can't use (`blocked`),
+        and switch the rest on. RHS is set from scratch, so there is nothing to undo.
+        """
+        for ds, (weight, constr) in self.kept_structures.items():
+            constr.RHS = weight + self.M if ds & blocked else weight
+        self.attacker_model.update()
+
+    def update_strategy_cuts(self):
+        """
+        A kept attack's value is the cheapest DS without it, which depends on the
+        current y bounds (BnB branching). Re-solve the defender for each and set the RHS.
+        """
+        for attack, constr in self.kept_strategies.items():
+            _, value = self.solve_defender(list(attack))
+            constr.RHS = value
+        self.protector_model.update()
 
     # -------------------------------------------------------------------------
     # Solves
@@ -287,9 +342,14 @@ class ThreeLevelGame:
             self.x[i].UB = 1
         self.attacker_model.update()
 
+        # After reading the solution: adding constraints discards it
+        if self.structure_propagation >= 0:
+            self.keep_structures(self.new_structures)
+
         return attack, value
 
     def solve_protector(self):
+        self.new_strategies = []  # (value, attack) of each cut the callback adds during this solve
         self.optimize(self.protector_model, "protector", self.critical_strategy_callback)
 
         status = self.protector_model.Status
@@ -300,6 +360,10 @@ class ThreeLevelGame:
             policy, value = [], self.M
         else:
             raise ValueError(f"Unexpected protector status: {status}")
+
+        # After reading the solution: adding constraints discards it
+        if self.strategy_propagation >= 0:
+            self.keep_strategies(self.new_strategies)
 
         return policy, value
 
