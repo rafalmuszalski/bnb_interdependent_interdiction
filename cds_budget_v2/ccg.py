@@ -158,7 +158,7 @@ class CCG(ThreeLevelGame):
 
                 self.add_scenario(attack)
 
-                self.optimize(self.protector_model)
+                self.optimize(self.protector_model, "protector")
                 if self.protector_model.Status != GRB.OPTIMAL:
                     raise ValueError(f"Unexpected master problem status: {self.protector_model.Status}")
                 policy = [i for i in self.inst.nodes if self.w[i].X > 0.5]

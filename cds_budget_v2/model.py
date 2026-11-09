@@ -20,6 +20,15 @@ class ThreeLevelGame:
         self.M = 1e5
         self.deadline = float("inf")  # perf_counter() time by which every solve must finish
 
+        # Statistics. Solve times are exclusive: time spent in nested solves (inside a
+        # callback) goes to the nested model, not its parent.
+        self.solve_time = {"protector": 0.0, "attacker": 0.0, "defender": 0.0}
+        self._nested_time = []         # stack: time of solves nested in each running solve
+        self.strategies_added = 0      # critical strategy cuts (protector), every time one is added
+        self.structures_added = 0      # critical structure cuts (attacker), every time one is added
+        self.distinct_strategies = set()
+        self.distinct_structures = set()
+
         self.env = gp.Env(empty=True)
         self.env.setParam("LogToConsole", 0)
         self.env.setParam("Seed", inst.seed)
@@ -149,9 +158,10 @@ class ThreeLevelGame:
         m.update()
         self.protector_model = m
 
-    def optimize(self, m: gp.Model, callback=None):
+    def optimize(self, m: gp.Model, name: str, callback=None):
         """
-        m.optimize() under the deadline. Raises LimitReached on the time or memory limit.
+        m.optimize() under the deadline, timed into solve_time[name].
+        Raises LimitReached on the time or memory limit.
         Gurobi ignores exceptions raised in a callback, so we catch them, stop the
         solve, and re-raise them here (this is how a limit in a nested solve gets out).
         """
@@ -165,7 +175,15 @@ class ThreeLevelGame:
 
         m._error = None
         m.Params.TimeLimit = max(0.0, self.deadline - perf_counter())
-        m.optimize(guarded if callback else None)
+        start = perf_counter()
+        self._nested_time.append(0.0)
+        try:
+            m.optimize(guarded if callback else None)
+        finally:
+            elapsed = perf_counter() - start
+            self.solve_time[name] += elapsed - self._nested_time.pop()
+            if self._nested_time:
+                self._nested_time[-1] += elapsed
 
         if m._error is not None:
             raise m._error
@@ -193,6 +211,8 @@ class ThreeLevelGame:
         ds, ds_weight = self.solve_defender(attack)
         if ds_weight < model.cbGet(GRB.Callback.MIPSOL_OBJ):
             model.cbLazy(self.alpha <= ds_weight + self.M * gp.quicksum(self.x[i] for i in ds))
+            self.structures_added += 1
+            self.distinct_structures.add(frozenset(ds))
             self.new_structures.append((ds_weight, ds))  # so callers can keep the cut
 
     def critical_strategy_callback(self, model: gp.Model, where: int):
@@ -212,6 +232,8 @@ class ThreeLevelGame:
             # nodes whose fortification would protect at least one attacked node
             cover = set(attack).union(*(self.inst.protectors_of[i] for i in attack))
             model.cbLazy(self.pi >= attack_value - self.M * gp.quicksum(self.w[i] for i in cover))
+            self.strategies_added += 1
+            self.distinct_strategies.add(frozenset(attack))
 
     # -------------------------------------------------------------------------
     # Solves
@@ -228,7 +250,7 @@ class ThreeLevelGame:
             self.y[i].UB = 0
         self.defender_model.update()
 
-        self.optimize(self.defender_model)
+        self.optimize(self.defender_model, "defender")
 
         status = self.defender_model.Status
         if status == GRB.OPTIMAL:
@@ -253,7 +275,7 @@ class ThreeLevelGame:
         self.attacker_model.update()
 
         self.new_structures = []  # (weight, ds) of each cut the callback adds during this solve
-        self.optimize(self.attacker_model, self.critical_structure_callback)
+        self.optimize(self.attacker_model, "attacker", self.critical_structure_callback)
 
         status = self.attacker_model.Status
         if status != GRB.OPTIMAL:
@@ -268,7 +290,7 @@ class ThreeLevelGame:
         return attack, value
 
     def solve_protector(self):
-        self.optimize(self.protector_model, self.critical_strategy_callback)
+        self.optimize(self.protector_model, "protector", self.critical_strategy_callback)
 
         status = self.protector_model.Status
         if status == GRB.OPTIMAL:

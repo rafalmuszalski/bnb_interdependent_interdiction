@@ -68,6 +68,8 @@ class BranchAndBound:
         self.upper_bound = float("inf")
         self.gap = float("inf")
         self.status = "open"  # why solve() stopped: optimal / time_limit / mem_limit
+        self.time = 0.0
+        self.heuristic_time = 0.0  # wall time in evaluate_policy (its solves also count in game.solve_time)
 
         self._add_node(Node(name=0, parent=None, depth=0, bound=float("-inf")))
 
@@ -102,12 +104,15 @@ class BranchAndBound:
             self.log_node(node, perf_counter() - start)
 
             if self.gap <= EPS:
+                self.status = "optimal"
                 log.info("Optimality gap closed")
                 break
             if perf_counter() - start >= self.time_limit:
                 self.status = "time_limit"
                 log.info(f"Time limit reached ({self.time_limit:.0f}s)")
                 break
+        else:                       # queue ran empty: every node was explored
+            self.status = "optimal"
 
         self.time = perf_counter() - start
         log.info(f"Status: {self.status}  LB={self.lower_bound:g}  UB={self.upper_bound:g}  gap={self.gap:.4g}")
@@ -139,7 +144,11 @@ class BranchAndBound:
             return
 
         # No overlap, but was the attacker's value right for this policy?
-        heuristic = self.evaluate_policy(node.policy)
+        heuristic_start = perf_counter()
+        try:
+            heuristic = self.evaluate_policy(node.policy)
+        finally:
+            self.heuristic_time += perf_counter() - heuristic_start
         if heuristic.weight > node.bound + EPS:
             # The attacker over-hedged; the heuristic found the policy's true value, which
             # is a feasible solution in its own right.
