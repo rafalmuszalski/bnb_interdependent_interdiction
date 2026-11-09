@@ -19,6 +19,7 @@ import gurobipy as gp
 from gurobipy import GRB
 
 from .instance import Instance
+from .bnb import Solution
 from .model import LimitReached, ThreeLevelGame
 
 log = logging.getLogger("ccg")
@@ -30,6 +31,11 @@ class CCG(ThreeLevelGame):
         self.structure_cuts = []  # (weight, ds, constr): attacker cuts kept across iterations
         self.num_scenarios = 0
         self.time_limit = time_limit
+        self.status = "loaded"  # why solve() stopped: optimal / time_limit / mem_limit
+        self.best = Solution()
+        self.lower_bound = float("-inf")
+        self.iterations = 0
+        self.time = 0.0
         super().__init__(inst, **kwargs)
 
     # -------------------------------------------------------------------------
@@ -125,13 +131,10 @@ class CCG(ThreeLevelGame):
     # Main loop
     # -------------------------------------------------------------------------
 
-    def solve(self):
-        """Returns (weight, policy, attack, structure) of the best solution found."""
+    def solve(self) -> Solution:
+        """Returns the best solution found (also kept in self.best)."""
         start = perf_counter()
-        lower_bound = float("-inf")
-        best = (float("inf"), [], [], [])
         policy = []
-        self.iterations = 0
 
         log.info(f"{'It':>4} | {'P.Cols':^6}  {'P.Rows':^6} | {'LB':^8}  {'D.Value':^8} | "
                  f"{'UB':^8} {'Gap':^10} {'Time(s)':>9}")
@@ -142,17 +145,17 @@ class CCG(ThreeLevelGame):
                 attack, _ = self.solve_attacker(policy)
                 structure, weight = self.solve_defender(attack)
 
-                if weight < best[0]:
-                    best = (weight, policy, attack, structure)
+                if weight < self.best.weight:
+                    self.best = Solution(weight, policy, attack, structure)
 
-                gap = (best[0] - lower_bound) / abs(lower_bound) if abs(lower_bound) not in (0, float("inf")) \
-                    else float("inf")
+                lb, ub = self.lower_bound, self.best.weight
+                gap = (ub - lb) / abs(lb) if abs(lb) not in (0, float("inf")) else float("inf")
                 log.info(f"{self.iterations:4d} | {self.protector_model.NumVars:^6}  "
-                         f"{self.protector_model.NumConstrs:^6} | {lower_bound:>8g}  {weight:>8g} | "
-                         f"{best[0]:^8g} {gap:^10.5g} {perf_counter() - start:>9.3f}")
+                         f"{self.protector_model.NumConstrs:^6} | {lb:>8g}  {weight:>8g} | "
+                         f"{ub:^8g} {gap:^10.5g} {perf_counter() - start:>9.3f}")
 
                 # Converged: the policy's true value matches the master's lower bound
-                if weight <= lower_bound + 1e-5:
+                if weight <= self.lower_bound + 1e-5:
                     self.status = "optimal"
                     break
 
@@ -162,13 +165,12 @@ class CCG(ThreeLevelGame):
                 if self.protector_model.Status != GRB.OPTIMAL:
                     raise ValueError(f"Unexpected master problem status: {self.protector_model.Status}")
                 policy = [i for i in self.inst.nodes if self.w[i].X > 0.5]
-                lower_bound = self.protector_model.ObjVal
+                self.lower_bound = self.protector_model.ObjVal
                 self.iterations += 1
         except LimitReached as e:
             self.status = e.reason
             log.info(f"Stopped at iteration {self.iterations}: {e.reason}")
 
-        log.info(f"Status: {self.status}  LB={lower_bound:g}  UB={best[0]:g}")
-        self.lower_bound = lower_bound
         self.time = perf_counter() - start
-        return best
+        log.info(f"Status: {self.status}  LB={self.lower_bound:g}  UB={self.best.weight:g}")
+        return self.best

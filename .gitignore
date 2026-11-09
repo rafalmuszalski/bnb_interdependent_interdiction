@@ -7,3 +7,4 @@ gurobi.log
 *.txt
 logs/ 
 *.log
+*.jsonl
