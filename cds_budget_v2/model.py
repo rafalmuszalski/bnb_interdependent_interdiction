@@ -1,14 +1,24 @@
 """The three Gurobi models of the protector-attacker-defender game."""
+from time import perf_counter
+
 import gurobipy as gp
 from gurobipy import GRB
 
 from .instance import Instance
 
 
+class LimitReached(Exception):
+    """A solve hit the time limit or Gurobi's memory limit. `reason` is "time_limit" or "mem_limit"."""
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+
+
 class ThreeLevelGame:
     def __init__(self, inst: Instance, threads: int = 8, soft_mem_limit_gb: float = 16):
         self.inst = inst
         self.M = 1e5
+        self.deadline = float("inf")  # perf_counter() time by which every solve must finish
 
         self.env = gp.Env(empty=True)
         self.env.setParam("LogToConsole", 0)
@@ -139,6 +149,31 @@ class ThreeLevelGame:
         m.update()
         self.protector_model = m
 
+    def optimize(self, m: gp.Model, callback=None):
+        """
+        m.optimize() under the deadline. Raises LimitReached on the time or memory limit.
+        Gurobi ignores exceptions raised in a callback, so we catch them, stop the
+        solve, and re-raise them here (this is how a limit in a nested solve gets out).
+        """
+        def guarded(model, where):
+            if model._error is None:
+                try:
+                    callback(model, where)
+                except Exception as e:
+                    model._error = e
+                    model.terminate()
+
+        m._error = None
+        m.Params.TimeLimit = max(0.0, self.deadline - perf_counter())
+        m.optimize(guarded if callback else None)
+
+        if m._error is not None:
+            raise m._error
+        if m.Status == GRB.TIME_LIMIT:
+            raise LimitReached("time_limit")
+        if m.Status == GRB.MEM_LIMIT:
+            raise LimitReached("mem_limit")
+
     # -------------------------------------------------------------------------
     # Callbacks
     # -------------------------------------------------------------------------
@@ -193,7 +228,7 @@ class ThreeLevelGame:
             self.y[i].UB = 0
         self.defender_model.update()
 
-        self.defender_model.optimize()
+        self.optimize(self.defender_model)
 
         status = self.defender_model.Status
         if status == GRB.OPTIMAL:
@@ -218,7 +253,7 @@ class ThreeLevelGame:
         self.attacker_model.update()
 
         self.new_structures = []  # (weight, ds) of each cut the callback adds during this solve
-        self.attacker_model.optimize(self.critical_structure_callback)
+        self.optimize(self.attacker_model, self.critical_structure_callback)
 
         status = self.attacker_model.Status
         if status != GRB.OPTIMAL:
@@ -233,7 +268,7 @@ class ThreeLevelGame:
         return attack, value
 
     def solve_protector(self):
-        self.protector_model.optimize(self.critical_strategy_callback)
+        self.optimize(self.protector_model, self.critical_strategy_callback)
 
         status = self.protector_model.Status
         if status == GRB.OPTIMAL:

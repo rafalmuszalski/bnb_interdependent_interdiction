@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Optional
 
-from .model import ThreeLevelGame
+from .model import LimitReached, ThreeLevelGame
 
 log = logging.getLogger("bnb")
 node_log = logging.getLogger("nodes")   # one row per processed node, for debugging
@@ -67,6 +67,7 @@ class BranchAndBound:
         self.lower_bound = float("-inf")
         self.upper_bound = float("inf")
         self.gap = float("inf")
+        self.status = "open"  # why solve() stopped: optimal / time_limit / mem_limit
 
         self._add_node(Node(name=0, parent=None, depth=0, bound=float("-inf")))
 
@@ -85,9 +86,18 @@ class BranchAndBound:
         node_log.info(f"{'Node':>6} {'Parent':>6} {'Var':>4} {'Fix':>3} {'Status':>6} {'Value':>9} | "
                       f"{'Policy':<16} {'Strategy':<16} Structure")
 
+        self.game.deadline = start + self.time_limit
+        self.status = "loaded" 
         while self.queue:
             node = heapq.heappop(self.queue)
-            self.process_node(node)
+            try:
+                self.process_node(node)
+            except LimitReached as e:
+                heapq.heappush(self.queue, node)  # unfinished: its bound still counts in the LB
+                self.update_bounds()
+                self.status = e.reason
+                log.info(f"Stopped at node {node.name}: {e.reason}")
+                break
             self.update_bounds()
             self.log_node(node, perf_counter() - start)
 
@@ -95,10 +105,12 @@ class BranchAndBound:
                 log.info("Optimality gap closed")
                 break
             if perf_counter() - start >= self.time_limit:
+                self.status = "time_limit"
                 log.info(f"Time limit reached ({self.time_limit:.0f}s)")
                 break
 
         self.time = perf_counter() - start
+        log.info(f"Status: {self.status}  LB={self.lower_bound:g}  UB={self.upper_bound:g}  gap={self.gap:.4g}")
         log.info(f"Best: weight={self.best.weight} policy={self.best.policy} "
                  f"attack={self.best.attack} structure={self.best.structure}")
         return self.best

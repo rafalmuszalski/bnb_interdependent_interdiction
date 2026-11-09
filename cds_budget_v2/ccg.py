@@ -19,7 +19,7 @@ import gurobipy as gp
 from gurobipy import GRB
 
 from .instance import Instance
-from .model import ThreeLevelGame
+from .model import LimitReached, ThreeLevelGame
 
 log = logging.getLogger("ccg")
 
@@ -136,41 +136,39 @@ class CCG(ThreeLevelGame):
         log.info(f"{'It':>4} | {'P.Cols':^6}  {'P.Rows':^6} | {'LB':^8}  {'D.Value':^8} | "
                  f"{'UB':^8} {'Gap':^10} {'Time(s)':>9}")
 
-        while perf_counter() - start < self.time_limit:
-            attack, _ = self.solve_attacker(policy)
-            structure, weight = self.solve_defender(attack)
+        self.deadline = start + self.time_limit
+        try:
+            while True:
+                attack, _ = self.solve_attacker(policy)
+                structure, weight = self.solve_defender(attack)
 
-            if weight < best[0]:
-                best = (weight, policy, attack, structure)
+                if weight < best[0]:
+                    best = (weight, policy, attack, structure)
 
-            gap = (best[0] - lower_bound) / abs(lower_bound) if abs(lower_bound) not in (0, float("inf")) \
-                else float("inf")
-            log.info(f"{self.iterations:4d} | {self.protector_model.NumVars:^6}  "
-                     f"{self.protector_model.NumConstrs:^6} | {lower_bound:>8g}  {weight:>8g} | "
-                     f"{best[0]:^8g} {gap:^10.5g} {perf_counter() - start:>9.3f}")
+                gap = (best[0] - lower_bound) / abs(lower_bound) if abs(lower_bound) not in (0, float("inf")) \
+                    else float("inf")
+                log.info(f"{self.iterations:4d} | {self.protector_model.NumVars:^6}  "
+                         f"{self.protector_model.NumConstrs:^6} | {lower_bound:>8g}  {weight:>8g} | "
+                         f"{best[0]:^8g} {gap:^10.5g} {perf_counter() - start:>9.3f}")
 
-            # Converged: the policy's true value matches the master's lower bound
-            if weight <= lower_bound + 1e-5:
-                break
+                # Converged: the policy's true value matches the master's lower bound
+                if weight <= lower_bound + 1e-5:
+                    self.status = "optimal"
+                    break
 
-            self.add_scenario(attack)
+                self.add_scenario(attack)
 
-            remaining = self.time_limit - (perf_counter() - start)
-            if remaining <= 0:
-                break
-            self.protector_model.Params.TimeLimit = remaining
-            self.protector_model.optimize()
+                self.optimize(self.protector_model)
+                if self.protector_model.Status != GRB.OPTIMAL:
+                    raise ValueError(f"Unexpected master problem status: {self.protector_model.Status}")
+                policy = [i for i in self.inst.nodes if self.w[i].X > 0.5]
+                lower_bound = self.protector_model.ObjVal
+                self.iterations += 1
+        except LimitReached as e:
+            self.status = e.reason
+            log.info(f"Stopped at iteration {self.iterations}: {e.reason}")
 
-            status = self.protector_model.Status
-            if status == GRB.TIME_LIMIT:
-                log.info("Time limit reached in master problem")
-                break
-            if status != GRB.OPTIMAL:
-                raise ValueError(f"Unexpected master problem status: {status}")
-            policy = [i for i in self.inst.nodes if self.w[i].X > 0.5]
-            lower_bound = self.protector_model.ObjVal
-            self.iterations += 1
-
+        log.info(f"Status: {self.status}  LB={lower_bound:g}  UB={best[0]:g}")
         self.lower_bound = lower_bound
         self.time = perf_counter() - start
         return best
