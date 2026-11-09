@@ -135,6 +135,8 @@ def main():
         if ccg is not None:
             record.update(solver_stats("ccg", ccg, ccg))
             record["ccg_iterations"] = ccg.iterations
+            record["ccg_cols"] = ccg.protector_model.NumVars
+            record["ccg_rows"] = ccg.protector_model.NumConstrs
         write_stats(experiment_dir / "stats.jsonl", record)
 
 
