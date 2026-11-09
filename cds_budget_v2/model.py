@@ -29,6 +29,9 @@ class ThreeLevelGame:
         self.kept_structures = {}  # frozenset(ds) -> (weight, constr) in the attacker model
         self.kept_strategies = {}  # frozenset(attack) -> constr in the protector model
 
+        # The defender's result depends only on which vertices it can't use
+        self.defender_cache = {}   # frozenset(unavailable vertices) -> (ds, weight)
+
         # Statistics. Solve times are exclusive: time spent in nested solves (inside a
         # callback) goes to the nested model, not its parent.
         self.solve_time = {"protector": 0.0, "attacker": 0.0, "defender": 0.0}
@@ -299,7 +302,12 @@ class ThreeLevelGame:
         Min-weight CDS with the attacked nodes removed. Doesn't apply the protector's
         policy (that's BnB's job). y bounds may be set by BnB branching, so attacked
         nodes are restored to their previous bound afterwards, not to 1.
+        Results are cached by the set of unavailable vertices (attacked or y.UB = 0).
         """
+        unavailable = frozenset(attack) | {i for i in self.inst.nodes if self.y[i].UB < 0.5}
+        if unavailable in self.defender_cache:
+            return self.defender_cache[unavailable]
+
         original_ub = {i: self.y[i].UB for i in attack}
         for i in attack:
             self.y[i].UB = 0
@@ -320,6 +328,7 @@ class ThreeLevelGame:
             self.y[i].UB = original_ub[i]
         self.defender_model.update()
 
+        self.defender_cache[unavailable] = (ds, weight)
         return ds, weight
 
     def solve_attacker(self, policy: list[int]):
