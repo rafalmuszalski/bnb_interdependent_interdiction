@@ -14,6 +14,10 @@ class LimitReached(Exception):
         self.reason = reason
 
 
+class NodeCutoff(Exception):
+    """The protector's bound reached its Cutoff: nothing in this BnB node beats the incumbent."""
+
+
 class ThreeLevelGame:
     def __init__(self, inst: Instance, threads: int = 8, soft_mem_limit_gb: float = 16,
                  structure_propagation: int = -1, strategy_propagation: int = -1):
@@ -367,6 +371,8 @@ class ThreeLevelGame:
             value = self.protector_model.ObjVal
         elif status == GRB.INFEASIBLE:
             policy, value = [], self.M
+        elif status == GRB.CUTOFF:
+            raise NodeCutoff()
         else:
             raise ValueError(f"Unexpected protector status: {status}")
 

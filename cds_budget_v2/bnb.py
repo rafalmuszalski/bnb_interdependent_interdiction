@@ -9,6 +9,7 @@ bound. A node is classified as:
     sopt    no overlap, but the attacker over-hedged against DSs that can't exist under
             the policy (the heuristic finds a higher true value)  -> branch
     int     the solution is valid for the interdependent game  -> candidate incumbent
+    kill    the protector's bound reached the incumbent mid-solve (Gurobi Cutoff)
 Branching on vertex v:
     D.Branch (fix=0): v may not be fortified
     P.Branch (fix=1): v is fortified and may not be in the DS
@@ -19,7 +20,7 @@ from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Optional
 
-from .model import LimitReached, ThreeLevelGame
+from .model import LimitReached, NodeCutoff, ThreeLevelGame
 
 log = logging.getLogger("bnb")
 node_log = logging.getLogger("nodes")   # one row per processed node, for debugging
@@ -123,7 +124,7 @@ class BranchAndBound:
     def process_node(self, node: Node):
         g = self.game
 
-        if node.bound > self.upper_bound:
+        if node.bound >= self.upper_bound:
             node.status = "prune"
             return
 
@@ -132,7 +133,14 @@ class BranchAndBound:
         g.set_structure_cuts(blocked=fortified)
         g.update_strategy_cuts()
 
-        node.policy, node.attack, node.structure, node.bound = g.solve_three_level_game()
+        # Stop the protector solve as soon as its bound shows this node can't beat the incumbent
+        g.protector_model.Params.Cutoff = self.upper_bound
+        try:
+            node.policy, node.attack, node.structure, node.bound = g.solve_three_level_game()
+        except NodeCutoff:
+            node.status = "kill"
+            node.bound = self.upper_bound  # the bound reached at least this
+            return
 
         if node.bound >= g.M:
             node.status = "infea"
