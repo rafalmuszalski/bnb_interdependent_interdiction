@@ -8,3 +8,4 @@ gurobi.log
 logs/ 
 *.log
 *.jsonl
+*.xlsx
