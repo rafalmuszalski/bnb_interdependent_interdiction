@@ -22,6 +22,7 @@ from typing import Optional
 from .model import ThreeLevelGame
 
 log = logging.getLogger("bnb")
+node_log = logging.getLogger("nodes")   # one row per processed node, for debugging
 
 EPS = 1e-5
 
@@ -81,6 +82,8 @@ class BranchAndBound:
         start = perf_counter()
         log.info(f"{'Node':>6} {'Parent':>6} {'Depth':>5} {'Var':>4} {'Fix':>3} {'Status':>6} "
                  f"{'Value':>9} | {'LB':>9} {'UB':>9} {'Gap':>9} {'Open':>5} {'Time(s)':>9}")
+        node_log.info(f"{'Node':>6} {'Parent':>6} {'Var':>4} {'Fix':>3} {'Status':>6} {'Value':>9} | "
+                      f"{'Policy':<16} {'Strategy':<16} Structure")
 
         while self.queue:
             node = heapq.heappop(self.queue)
@@ -227,3 +230,5 @@ class BranchAndBound:
         log.info(f"{node.name:>6} {parent:>6} {node.depth:>5} {var:>4} {fix:>3} {node.status:>6} "
                  f"{node.bound:>9g} | {self.lower_bound:>9g} {self.upper_bound:>9g} {self.gap:>9.4g} "
                  f"{len(self.queue):>5} {elapsed:>9.2f}")
+        node_log.info(f"{node.name:>6} {parent:>6} {var:>4} {fix:>3} {node.status:>6} {node.bound:>9g} | "
+                      f"{str(node.policy):<16} {str(node.attack):<16} {node.structure}")

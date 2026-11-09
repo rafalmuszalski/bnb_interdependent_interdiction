@@ -1,6 +1,7 @@
 """Run one instance:  python -m cds_budget_v2.main --n 20 --k 5 --b_p 2 --b_a 2"""
 import argparse
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -25,16 +26,16 @@ def parse_args():
     p.add_argument("--bnb_only",              action="store_true",     help="Run only BnB, skip CCG")
     p.add_argument("--protectors",            type=int,   default=2,   help="Protectors per node within a clique")
     p.add_argument("--bridges",               type=int,   default=4,   help="Max inter-clique bridges per pair of cliques")
-    p.add_argument("--run_dir",               type=Path,  default=None, help="Folder for this run's logs (default: experiments/MMDD_HHMM_SS/0)")
     return p.parse_args()
 
 
-def make_run_dir(run_dir: Path | None) -> Path:
-    """Use the given folder, or experiments/MMDD_HHMM_SS/0 for a one-off run."""
-    if run_dir is None:
-        run_dir = EXPERIMENTS_DIR / datetime.now().strftime("%m%d_%H%M_%S") / "0"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    return run_dir
+def make_log_prefix() -> Path:
+    """experiments/$EXPERIMENT_ID/$RUN_ID; defaults to experiments/MMDD_HHMM_SS/000 for a one-off run."""
+    experiment_id = os.environ.get("EXPERIMENT_ID", datetime.now().strftime("%m%d_%H%M_%S"))
+    run_id = int(os.environ.get("RUN_ID", 0))
+    experiment_dir = EXPERIMENTS_DIR / experiment_id
+    experiment_dir.mkdir(parents=True, exist_ok=True)
+    return experiment_dir / f"{run_id:03d}"
 
 
 def log_to_file(name: str, path: Path):
@@ -49,13 +50,14 @@ def log_to_file(name: str, path: Path):
 
 def main():
     args = parse_args()
-    run_dir = make_run_dir(args.run_dir)
-    log_to_file("bnb", run_dir / "bnb.log")
-    log_to_file("ccg", run_dir / "ccg.log")
+    prefix = make_log_prefix()
+    log_to_file("bnb", Path(f"{prefix}_bnb.log"))
+    log_to_file("nodes", Path(f"{prefix}_nodes.log"))
+    log_to_file("ccg", Path(f"{prefix}_ccg.log"))
 
     inst = small_world_clique(n=args.n, clique_size=args.k, protectors=args.protectors,
                               bridges=args.bridges, b_p=args.b_p, b_a=args.b_a, seed=args.seed)
-    print(f"Run dir: {run_dir}")
+    print(f"Logs: {prefix}")
 
     # TODO: statistics, CSV output
     bnb = BranchAndBound(ThreeLevelGame(inst), time_limit=args.time_limit)
