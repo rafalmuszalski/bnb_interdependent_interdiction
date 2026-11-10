@@ -105,7 +105,7 @@ def main():
     log_to_file("nodes", Path(f"{prefix}_nodes.log"))
     log_to_file("ccg", Path(f"{prefix}_ccg.log"))
     setup_console(experiment_dir / "console.log")  # shared by all runs of the experiment
-    run_total = os.environ.get("RUN_TOTAL")  # set by run_examples.sh; absent for a single run
+    run_total = os.environ.get("RUN_TOTAL")  # set by run.sh; absent for a single run
     progress = f"{run_id + 1}/{run_total} " if run_total else ""
     console.info(f"=== [{progress}run {run_id:03d}] {' '.join(sys.argv[1:])}")
     console.info(f"Logs: {prefix}")

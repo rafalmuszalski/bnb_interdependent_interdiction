@@ -1,4 +1,4 @@
-"""Tables from stats.jsonl:  python -m cds_budget_v2.make_table path/to/stats.jsonl
+"""Tables from stats.jsonl:  python postprocess.py path/to/stats.jsonl   (run.sh calls it at the end)
 Saves summary.xlsx next to the stats file, with two sheets:
     runs                 every line of stats.jsonl, one row per run
     condensed_overview   summary_table(): avg/max per (n, b_p, b_a)"""

@@ -1,94 +1,88 @@
 #!/usr/bin/env bash
-# run_params_sequential.sh  <script_with_PARAMS.sh>
+# Run every experiment in a table file, one after another, then build summary.xlsx.
 #
-# Runs all experiments from PARAMS array sequentially.
-# Works on both Mac and Linux.
+# Usage (from anywhere):  ./run.sh <problem>/<table>.sh      e.g.  ./run.sh cds_budget_v2/table1.sh
+#
+# The problem is the top-level package the table file sits in. It must have a main.py
+# (run as `python -m <problem>.main`) that reads EXPERIMENT_ID, RUN_ID and RUN_TOTAL from
+# the environment and writes its logs and stats.jsonl to <problem>/experiments/$EXPERIMENT_ID/.
+# At the end, postprocess.py (repo root) turns stats.jsonl into summary.xlsx.
+#
+# The table file defines (see cds_budget_v2/table1.sh):
+#   PARAMS=( "--n 20 --k 5 ..." ... )   arguments for main.py, one line per setting
+#   SEEDS=( 0 1 2 3 4 )                 optional: every PARAMS line runs once per seed.
+#                                       Without SEEDS each line runs once, as written.
+# It is sourced (executed by bash), so keep it to PARAMS and SEEDS.
+#
+# Output goes to <problem>/experiments/<MMDD_HHMM_SS>/:
+#   NNN_*.log      per-run logs (NNN = run id 000, 001, ...)
+#   console.log    console output of all runs, each line timestamped
+#   stats.jsonl    one line of statistics per run
+#   summary.xlsx   built by postprocess.py at the end
 set -eo pipefail
 
-# ---------------------------------------------------------------------------
-# Args / paths
-# ---------------------------------------------------------------------------
-src="${1:?Usage: $0 path/to/script_with_PARAMS.sh}"
-base_dir="${src%%/*}"
-run_stamp=$(date +"%d%b%H%M" | tr '[:upper:]' '[:lower:]')
+root="$(cd "$(dirname "$0")" && pwd)"
+[[ $# -eq 1 ]] || { echo "Usage: $0 <problem>/<table>.sh" >&2; exit 2; }
+[[ -f "$1" ]] || { echo "ERROR: table file not found: $1" >&2; exit 2; }
+table="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"   # absolute, before the cd below
 
-mkdir -p "$base_dir/logs/$run_stamp"
-master_log="$base_dir/logs/$run_stamp/master.log"
-exec > >(tee -a "$master_log") 2>&1
+# ---- Problem package: the top-level folder of the repo that holds the table ----
+[[ "$table" == "$root"/*/* ]] || { echo "ERROR: table file must be inside a problem folder of $root" >&2; exit 2; }
+relative="${table#"$root"/}"
+problem="${relative%%/*}"
+[[ -f "$root/$problem/main.py" ]] || { echo "ERROR: $problem has no main.py" >&2; exit 2; }
 
-# ---------------------------------------------------------------------------
-# Load PARAMS array
-# ---------------------------------------------------------------------------
-block=$(sed -n '/^PARAMS[[:space:]]*=(/,/^[[:space:]]*)[[:space:]]*$/p' "$src")
-[[ -n "$block" ]] || { echo "ERROR: could not parse PARAMS block from $src" >&2; exit 1; }
-eval "$block"
-total=${#PARAMS[@]}
-[[ $total -gt 0 ]] || { echo "ERROR: PARAMS array is empty after eval" >&2; exit 1; }
+cd "$root"                                        # so `python -m <problem>.main` works
+PYTHON="${PYTHON:-.venv/bin/python}"
 
-# ---------------------------------------------------------------------------
-# Virtualenv
-# ---------------------------------------------------------------------------
-# source .venv/bin/activate
+# ---- Load the table ----
+PARAMS=()
+SEEDS=()
+source "$table"
+[[ ${#PARAMS[@]} -gt 0 ]] || { echo "ERROR: no PARAMS in $table" >&2; exit 2; }
+if [[ ${#SEEDS[@]} -gt 0 ]]; then
+  for params in "${PARAMS[@]}"; do
+    if [[ " $params " == *" --seed "* ]]; then
+      echo "ERROR: $table sets SEEDS and also --seed in PARAMS; use one or the other" >&2; exit 2
+    fi
+  done
+  runs_per_line=${#SEEDS[@]}
+else
+  runs_per_line=1
+fi
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-log_dir_for() { echo "$base_dir/logs/$run_stamp/$(printf '%03d' "$1")"; }
+export EXPERIMENT_ID="$(date +%m%d_%H%M_%S)"
+export RUN_TOTAL=$(( ${#PARAMS[@]} * runs_per_line ))   # for the [k/total] progress in the console
+experiment_dir="$problem/experiments/$EXPERIMENT_ID"
+mkdir -p "$experiment_dir"
+echo "Problem: $problem"
+echo "Table:   $relative ($RUN_TOTAL runs)"
+echo "Logs:    $experiment_dir"
 
+# Build summary.xlsx when the script ends: after the last run, or early on a crash or Ctrl+C
+# (then it covers the runs that finished). Skipped if no run finished.
+postprocess() {
+  if [[ -f "$experiment_dir/stats.jsonl" ]]; then
+    $PYTHON postprocess.py "$experiment_dir/stats.jsonl" || echo "postprocess failed"
+  fi
+}
+trap postprocess EXIT
+
+# ---- Run ----
 run_one() {
-  local task_id="$1"
-  local params="${PARAMS[$task_id]}"
-  local log_dir; log_dir="$(log_dir_for "$task_id")"
-  mkdir -p "$log_dir"
-
-  export SLURM_ARRAY_TASK_ID="$task_id"
-  export EXPERIMENT_DIR="$log_dir"
-
-  local ts; ts="$(date '+%Y-%m-%d %H:%M:%S')"
-  echo "[$ts] ▶ task $task_id of $total"
-  echo "[$ts] params: $params"
-
-  local rc=0
-  eval python -m "$base_dir.main" $params \
-    >| "$log_dir/stdout.log" \
-    2>| "$log_dir/stderr.log" || rc=$?
-
-  ts="$(date '+%Y-%m-%d %H:%M:%S')"
-  local msg
-  case "$rc" in
-    0) echo "[$ts] ✓ task $task_id done"; return ;;
-    1)  msg="❌ task $task_id failed — experiment error (rc=1)" ;;
-    17) msg="🧠 task $task_id memory limit hit (rc=17)" ;;
-    *)  msg="❌ task $task_id crashed unexpectedly (rc=$rc)" ;;
-  esac
-
-  echo "[$ts] $msg, see $log_dir/stderr.log"
-  touch "$log_dir/.failed"
+  export RUN_ID="$run_id"
+  $PYTHON -m "$problem.main" "$@"
+  echo
+  run_id=$((run_id + 1))
 }
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-echo "========================================"
-echo "Table      : $src"
-echo "Run stamp  : $run_stamp"
-echo "Base dir   : $base_dir"
-echo "Total tasks: $total"
-echo "========================================"
-
-trap 'echo ""; echo "Caught signal — exiting."; exit 1' INT TERM
-
-for (( i = 0; i < total; i++ )); do
-  run_one "$i"
+run_id=0
+for params in "${PARAMS[@]}"; do
+  if [[ ${#SEEDS[@]} -gt 0 ]]; then
+    for seed in "${SEEDS[@]}"; do
+      run_one $params --seed "$seed"
+    done
+  else
+    run_one $params
+  fi
 done
-
-fail=0
-while IFS= read -r -d '' _; do
-  (( fail++ )) || true
-done < <(find "$base_dir/logs/$run_stamp" -name '.failed' -print0 2>/dev/null)
-
-echo "========================================"
-echo "Done.  Failures: $fail / $total"
-echo "Logs : $base_dir/logs/$run_stamp/"
-echo "========================================"
-(( fail == 0 ))
