@@ -14,14 +14,15 @@ SUMMARY_COLUMNS = [
 
 
 def summary_table(df: pd.DataFrame) -> pd.DataFrame:
-    """One row per (n, b_p, b_a): avg and max of each BnB and CCG statistic, and the number of instances."""
+    """One row per (n, b_p, b_a): avg and max of each BnB and CCG statistic (e.g. bnb_time_avg), and the number of instances."""
     df = df.reindex(columns=GROUP + SUMMARY_COLUMNS)  # missing columns (e.g. --bnb_only runs) become NaN
     groups = df.groupby(GROUP)
 
     table = groups[SUMMARY_COLUMNS].agg(["mean", "max"])
     table = table.rename(columns={"mean": "avg"}, level=1)
     table[("instances", "")] = groups.size()
-    return table
+    table.columns = [f"{stat}_{agg}" if agg else stat for stat, agg in table.columns]  # flat header
+    return table.reset_index()
 
 
 if __name__ == "__main__":
@@ -29,5 +30,5 @@ if __name__ == "__main__":
     df = pd.read_json(stats_path, lines=True)
 
     out_path = stats_path.parent / "summary.xlsx"
-    summary_table(df).to_excel(out_path)
+    summary_table(df).to_excel(out_path, index=False)
     print(f"Saved {out_path}")
