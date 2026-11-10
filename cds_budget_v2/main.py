@@ -29,7 +29,7 @@ def parse_args():
     p.add_argument("--strategy_propagation",  type=int,   default=0,   choices=[-1, 0],    help="Protector cut propagation (BnB): -1 off, 0 constraint")
     p.add_argument("--structure_propagation", type=int,   default=1,   choices=[-1, 0, 1], help="Attacker cut propagation (BnB): -1 off, 0 constraint, 1 lazy")
     p.add_argument("--seed",                  type=int,   default=1,   help="Random seed")
-    p.add_argument("--time_limit",            type=float, default=60*60*3, help="Time limit in seconds")
+    p.add_argument("--time_limit",            type=float, default=60*60*1, help="Time limit in seconds")
     p.add_argument("--bnb_only",              action="store_true",     help="Run only BnB, skip CCG")
     p.add_argument("--protectors",            type=int,   default=2,   help="Protectors per node within a clique")
     p.add_argument("--bridges",               type=int,   default=4,   help="Max inter-clique bridges per pair of cliques")
