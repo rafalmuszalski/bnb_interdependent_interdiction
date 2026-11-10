@@ -10,15 +10,25 @@ If you use this repository in your research, please cite our paper.
 
 ### Dependencies
 
-The code was tested with the following versions:
+Python 3.14.3 with the packages in `requirements.txt`:
 
-| Package | Version |
-|---|---|
-| [Gurobi](https://www.gurobi.com/) | 13.0.1 |
-| Python | 3.12.3 |
-| NetworkX | 3.6.1 |
-| Gurobipy | 13.0.1 |
-| Matplotlib | 3.10.8 |
+```
+gurobipy==13.0.2
+networkx==3.6.1
+pandas==3.0.6
+openpyxl==3.1.5
+matplotlib==3.11.1
+numpy==2.5.1
+```
+ A full [Gurobi](https://www.gurobi.com/) license is required.
+
+```shell
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+`run.sh` uses `.venv/bin/python`; to use another interpreter, set `PYTHON`, e.g. `PYTHON=python3 ./run.sh ...`.
 
 ### Running the Code
 
@@ -45,27 +55,35 @@ bash run.sh DS_budget/table8.sh
 ```
 would run the experiments to generate the eight tables that appear in the paper. 
 
-#### Parallel Execution (Linux)
+### Interpreting the Results
 
-On Linux, you can run experiments concurrently using:
+Each call to `run.sh` creates `<problem>/experiments/<MMDD_HHMM_SS>/` with:
 
-```shell
-bash run_par.sh CDS_budget/table1.sh
-```
+| File | Contents |
+|---|---|
+| `console.log` | Console output of all runs, timestamped: the table being run, each run's arguments and its BnB/CCG result. |
+| `stats.jsonl` | One JSON line per run: the run's arguments and all statistics (below). |
+| `summary.xlsx` | Built from `stats.jsonl`. Sheet `runs`: one row per run. Sheet `condensed_overview`: average and maximum of the main statistics per (`n`, `b_p`, `b_a`). |
+| `NNN_bnb.log` | BnB progress of run `NNN`: one line per node with its status, value, lower/upper bound, gap and elapsed time. |
+| `NNN_nodes.log` | One line per BnB node with the protector's policy, the attacker's strategy and the defender's structure. |
+| `NNN_ccg.log` | CCG progress of run `NNN`: one line per iteration with the master size, bounds, gap and elapsed time. |
 
-Configuration details are documented inside `run_par.sh`. You may need to heavily modify this file to suit your hardware.
+BnB node statuses: `int` (feasible for the interdependent game), `frac` (policy and structure overlap; branched), `sopt` (attacker over-hedged; branched), `infea` (no feasible structure), `kill` (cut off by the incumbent mid-solve), `prune` (bound no better than the incumbent; not solved).
 
-#### Running with SLURM
+Besides the run's arguments, `stats.jsonl` has `error` (the traceback if the run crashed, else empty) and these statistics, prefixed `bnb_` or `ccg_`:
 
-The commands inside each `tableX.sh` file can be wrapped with SLURM directives to run on a computing cluster. To do so:
-
-1. Add the necessary SLURM directives to the top of the script.
-2. Set the working directory to the project root.
-3. Create a per-task logging directory; redirect `stdout`/`stderr` to it and export `EXPERIMENT_DIR` pointing to that directory. 
-4. Activate your Python environment and set any required environment variables (`GUROBI_HOME`, `GRB_LICENSE_FILE`).
-5. Add the `PARAMS=()` array in the script — SLURM selects which experiment to run based on `SLURM_ARRAY_TASK_ID`.
-6. Submit using `sbatch run_slurm.sh`
-
+| Statistic | Meaning |
+|---|---|
+| `status` | `optimal`, `time_limit` or `mem_limit` |
+| `upper_bound`, `lower_bound`, `gap` | Final bounds and relative gap |
+| `policy`, `attack`, `structure` | Best solution found |
+| `time` | Wall-clock seconds from model construction to the end of the solve |
+| `protector_time`, `attacker_time`, `defender_time` | Gurobi time per model, excluding solves nested in its callbacks; their sum is at most `time` |
+| `bnb_heuristic_time` | Time in the BnB heuristic; its solves are also counted in the three times above |
+| `bnb_nodes` | Nodes explored (solved), excluding pruned and unexplored nodes |
+| `ccg_iterations`, `ccg_cols`, `ccg_rows` | Master problems solved, and the final master's size |
+| `strategies_added`, `structures_added` | Cuts added to the protector and attacker models (repeats included); `*_distinct` counts unique ones |
+| `defender_calls`, `defender_cache_hits` | Defender subproblems requested, and how many were answered from the cache without a Gurobi solve |
 
 ### Problem-Specific Arguments
 
