@@ -55,6 +55,7 @@ export EXPERIMENT_ID="$(date +%m%d_%H%M_%S)"
 export RUN_TOTAL=$(( ${#PARAMS[@]} * runs_per_line ))   # for the [k/total] progress in the console
 experiment_dir="$problem/experiments/$EXPERIMENT_ID"
 mkdir -p "$experiment_dir"
+echo "$(date '+%Y-%m-%d %H:%M:%S') Running $relative" > "$experiment_dir/console.log"
 echo "Problem: $problem"
 echo "Table:   $relative ($RUN_TOTAL runs)"
 echo "Logs:    $experiment_dir"
