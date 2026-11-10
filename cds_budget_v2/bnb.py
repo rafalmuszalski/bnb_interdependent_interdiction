@@ -70,6 +70,10 @@ class BranchAndBound:
         self.status = "open"  # why solve() stopped: optimal / time_limit / mem_limit
         self.time = 0.0
         self.heuristic_time = 0.0  # wall time in evaluate_policy (its solves also count in game.solve_time)
+        # Nodes explored: processing finished with a solve (infea / frac / sopt / int, or kill,
+        # which stopped mid-solve on the Cutoff). Not counted: nodes pruned by bound without
+        # a solve, nodes interrupted by the time/memory limit, and nodes never popped.
+        self.nodes_explored = 0
 
         self._add_node(Node(name=0, parent=None, depth=0, bound=float("-inf")))
 
@@ -94,6 +98,8 @@ class BranchAndBound:
             node = heapq.heappop(self.queue)
             try:
                 self.process_node(node)
+                if node.status != "prune":
+                    self.nodes_explored += 1
             except LimitReached as e:
                 heapq.heappush(self.queue, node)  # unfinished: its bound still counts in the LB
                 self.update_bounds()

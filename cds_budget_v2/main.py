@@ -71,6 +71,8 @@ def solver_stats(name: str, solver, game: ThreeLevelGame) -> dict:
         "protector_time":      game.solve_time["protector"],
         "attacker_time":       game.solve_time["attacker"],
         "defender_time":       game.solve_time["defender"],
+        "defender_calls":      game.defender_calls,
+        "defender_cache_hits": game.defender_cache_hits,
         "strategies_added":    game.strategies_added,
         "strategies_distinct": len(game.distinct_strategies),
         "structures_added":    game.structures_added,
@@ -103,7 +105,9 @@ def main():
     log_to_file("nodes", Path(f"{prefix}_nodes.log"))
     log_to_file("ccg", Path(f"{prefix}_ccg.log"))
     setup_console(experiment_dir / "console.log")  # shared by all runs of the experiment
-    console.info(f"=== [{run_id}] {' '.join(sys.argv[1:])}")
+    run_total = os.environ.get("RUN_TOTAL")  # set by run_examples.sh; absent for a single run
+    progress = f"{run_id + 1}/{run_total} " if run_total else ""
+    console.info(f"=== [{progress}run {run_id:03d}] {' '.join(sys.argv[1:])}")
     console.info(f"Logs: {prefix}")
 
     record = {
@@ -133,7 +137,7 @@ def main():
         bnb = BranchAndBound(game, time_limit=args.time_limit)
         sol = bnb.solve()
         console.info(f"BnB  {bnb.status}  value {sol.weight:g}  policy {sol.policy}  attack {sol.attack}  "
-              f"structure {sol.structure}  ({len(bnb.nodes)} nodes, {bnb.time:.1f}s)")
+              f"structure {sol.structure}  ({bnb.nodes_explored} nodes explored, {bnb.time:.1f}s)")
 
         if not args.bnb_only:
             ccg = CCG(inst, time_limit=args.time_limit)
@@ -147,7 +151,7 @@ def main():
     finally:
         if bnb is not None:
             record.update(solver_stats("bnb", bnb, bnb.game))
-            record["bnb_nodes"] = len(bnb.nodes)
+            record["bnb_nodes"] = bnb.nodes_explored  # explored, not created
             record["bnb_heuristic_time"] = bnb.heuristic_time
         if ccg is not None:
             record.update(solver_stats("ccg", ccg, ccg))

@@ -37,6 +37,8 @@ class ThreeLevelGame:
 
         # The defender's result depends only on which vertices it can't use
         self.defender_cache = {}   # frozenset(unavailable vertices) -> (ds, weight)
+        self.defender_calls = 0       # every solve_defender() call
+        self.defender_cache_hits = 0  # calls answered from defender_cache (no Gurobi solve)
 
         # Statistics. Solve times are exclusive: time spent in nested solves (inside a
         # callback) goes to the nested model, not its parent.
@@ -311,7 +313,9 @@ class ThreeLevelGame:
         Results are cached by the set of unavailable vertices (attacked or y.UB = 0).
         """
         unavailable = frozenset(attack) | {i for i in self.inst.nodes if self.y[i].UB < BINARY_THRESHOLD}
+        self.defender_calls += 1
         if unavailable in self.defender_cache:
+            self.defender_cache_hits += 1
             return self.defender_cache[unavailable]
 
         original_ub = {i: self.y[i].UB for i in attack}
