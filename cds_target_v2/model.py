@@ -4,8 +4,15 @@ from time import perf_counter
 import gurobipy as gp
 from gurobipy import GRB
 
-from solver_constants import BIG_M, BINARY_THRESHOLD, EPS, GUROBI_SEED, SOFT_MEM_LIMIT_GB, THREADS
+from solver_constants import BINARY_THRESHOLD, EPS, GUROBI_SEED, SOFT_MEM_LIMIT_GB, THREADS
 from .instance import Instance
+
+# Value of an infeasible defender (no CDS exists). Part of the problem definition, not a
+# solver setting: when the unprotected attack is infeasible, the protector's target is
+# computed from this value (see init_protector_model), so changing it changes the instances.
+# It must stay above every feasible CDS weight and above the target. Also the largest value
+# alpha can take, and the value reported for a BnB node that can't meet the target.
+INFEASIBLE_VALUE = 1e5
 
 
 class LimitReached(Exception):
@@ -24,7 +31,7 @@ class ThreeLevelGame:
                  structure_propagation: int = -1, strategy_propagation: int = -1):
         self.created = perf_counter()
         self.inst = inst
-        self.M = BIG_M
+        self.M = INFEASIBLE_VALUE  # see INFEASIBLE_VALUE above
         self.target = None  # t_p: attacks worth more than this must be blocked (set in init_protector_model)
         self.deadline = float("inf")  # perf_counter() time by which every solve must finish
 
@@ -131,7 +138,7 @@ class ThreeLevelGame:
     def init_attacker_model(self):
         """
         Attacker: max alpha, the defender's best-response value.
-        Defender responses arrive later as lazy cuts: alpha <= w(D) + M * sum_{i in D} x_i
+        Defender responses arrive later as lazy cuts: alpha <= w(D) + (M - w(D)) * sum_{i in D} x_i
         """
         G = self.inst.G
 
@@ -146,7 +153,7 @@ class ThreeLevelGame:
 
         m.addConstr(gp.quicksum(G.nodes[i]["cost"] * self.x[i] for i in G.nodes()) <= self.inst.b_a,
                     name="attack_budget")
-        m.addConstr(self.alpha <= self.M + 1)  # keeps alpha bounded before any cuts exist
+        m.addConstr(self.alpha <= self.M)  # alpha can't exceed the infeasible value; bounded before any cuts
 
         m.ModelSense = GRB.MAXIMIZE
         m.update()
@@ -155,9 +162,12 @@ class ThreeLevelGame:
     def init_protector_model(self):
         """
         Protector: fortify as few nodes as possible so that no attack is worth more than
-        the target t_p; pi = 1 (at cost M) if the target can't be met.
-            min  sum_i w_i + M * pi
-        Critical attacks (worth more than t_p) arrive later as lazy cuts: pi + sum_{i covering A} w_i >= 1
+        the target t_p.
+            min  sum_i w_i
+        Critical attacks (worth more than t_p) arrive later as lazy cuts: sum_{i covering A} w_i >= 1
+        At the root the target is always reachable (fortifying every node blocks every
+        attack). A BnB node whose branching makes it unreachable is infeasible, and
+        solve_protector reports it with value M.
 
         The target closes b_p percent of the gap between the unprotected attack value a0
         and the unattacked defender weight d0:  t_p = a0 - round((a0 - d0) * b_p / 100).
@@ -171,7 +181,6 @@ class ThreeLevelGame:
         m.Params.LazyConstraints = 1
 
         self.w = [m.addVar(vtype=GRB.BINARY, obj=1, name=f"w_{i}") for i in G.nodes()]  # w[i] = 1 if i is fortified
-        self.pi = m.addVar(vtype=GRB.CONTINUOUS, obj=self.M, name="pi")  # 1 if the target can't be met
 
         _, no_attack_weight = self.solve_defender(attack=[])
         _, no_protection_value = self.solve_attacker(policy=[])
@@ -215,6 +224,27 @@ class ThreeLevelGame:
             raise LimitReached("mem_limit")
 
     # -------------------------------------------------------------------------
+    # Cuts
+    # -------------------------------------------------------------------------
+
+    def structure_cut(self, weight: float, ds):
+        """
+        alpha <= w(D) + (M - w(D)) * sum_{i in D} x_i
+        Attacking any node of D lets alpha reach M (its largest possible value), so the
+        coefficient M - w(D) is the smallest valid one.
+        """
+        return self.alpha <= weight + (self.M - weight) * gp.quicksum(self.x[i] for i in ds)
+
+    def strategy_cut(self, cover):
+        """sum_{i in cover} w_i >= 1: the protector must protect at least one attacked node."""
+        return gp.quicksum(self.w[i] for i in sorted(cover)) >= 1
+
+    @staticmethod
+    def strategy_cover(inst, attack):
+        """Nodes whose fortification would protect at least one attacked node."""
+        return set(attack).union(*(inst.protectors_of[i] for i in attack))
+
+    # -------------------------------------------------------------------------
     # Callbacks
     # -------------------------------------------------------------------------
 
@@ -222,7 +252,7 @@ class ThreeLevelGame:
         """
         Attacker lazy cuts. For each incumbent attack, solve the defender. If the best
         DS is cheaper than the attacker's alpha, add it as a cut:
-            alpha <= w(D) + M * sum_{i in D} x_i
+            alpha <= w(D) + (M - w(D)) * sum_{i in D} x_i
         """
         if where != GRB.Callback.MIPSOL:
             return
@@ -232,7 +262,7 @@ class ThreeLevelGame:
 
         ds, ds_weight = self.solve_defender(attack)
         if ds_weight < model.cbGet(GRB.Callback.MIPSOL_OBJ):
-            model.cbLazy(self.alpha <= ds_weight + self.M * gp.quicksum(self.x[i] for i in ds))
+            model.cbLazy(self.structure_cut(ds_weight, ds))
             self.structures_added += 1
             self.distinct_structures.add(frozenset(ds))
             self.new_structures.append((ds_weight, ds))  # so callers can keep the cut
@@ -240,8 +270,8 @@ class ThreeLevelGame:
     def critical_strategy_callback(self, model: gp.Model, where: int):
         """
         Protector lazy cuts. For each incumbent policy, solve the A-D subgame. If the
-        best attack is worth more than the target, the protector must cover it (or pay M):
-            pi + sum_{i covering A} w_i >= 1
+        best attack is worth more than the target, the protector must cover it:
+            sum_{i covering A} w_i >= 1
         """
         if where != GRB.Callback.MIPSOL:
             return
@@ -251,9 +281,8 @@ class ThreeLevelGame:
 
         attack, attack_value = self.solve_attacker(policy)
         if attack_value > self.target:
-            # nodes whose fortification would protect at least one attacked node
-            cover = set(attack).union(*(self.inst.protectors_of[i] for i in attack))
-            model.cbLazy(self.pi + gp.quicksum(self.w[i] for i in sorted(cover)) >= 1)
+            cover = self.strategy_cover(self.inst, attack)
+            model.cbLazy(self.strategy_cut(cover))
             self.strategies_added += 1
             self.distinct_strategies.add(frozenset(attack))
             self.new_strategies.append((attack_value, attack))  # kept after the solve, if propagating
@@ -267,8 +296,7 @@ class ThreeLevelGame:
         for weight, ds in structures:
             if frozenset(ds) in self.kept_structures:
                 continue
-            constr = self.attacker_model.addConstr(
-                self.alpha <= weight + self.M * gp.quicksum(self.x[i] for i in ds))
+            constr = self.attacker_model.addConstr(self.structure_cut(weight, ds))
             constr.Lazy = self.structure_propagation
             self.kept_structures[frozenset(ds)] = (weight, constr)
         self.attacker_model.update()
@@ -278,8 +306,8 @@ class ThreeLevelGame:
         for value, attack in strategies:
             if frozenset(attack) in self.kept_strategies:
                 continue
-            cover = set(attack).union(*(self.inst.protectors_of[i] for i in attack))
-            constr = self.protector_model.addConstr(gp.quicksum(self.w[i] for i in sorted(cover)) >= 1)
+            cover = self.strategy_cover(self.inst, attack)
+            constr = self.protector_model.addConstr(self.strategy_cut(cover))
             self.kept_strategies[frozenset(attack)] = constr
         self.protector_model.update()
 
@@ -289,7 +317,7 @@ class ThreeLevelGame:
         and switch the rest on. RHS is set from scratch, so there is nothing to undo.
         """
         for ds, (weight, constr) in self.kept_structures.items():
-            constr.RHS = weight + self.M if ds & blocked else weight
+            constr.RHS = self.M if ds & blocked else weight  # alpha <= M is no restriction
         self.attacker_model.update()
 
     def update_strategy_cuts(self):

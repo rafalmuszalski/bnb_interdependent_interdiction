@@ -121,8 +121,7 @@ class CCG(ThreeLevelGame):
         for c in relaxed:
             c.RHS -= self.M
         for weight, ds in self.new_structures:
-            c = self.attacker_model.addConstr(
-                self.alpha <= weight + self.M * gp.quicksum(self.x[i] for i in ds))
+            c = self.attacker_model.addConstr(self.structure_cut(weight, ds))
             self.structure_cuts.append((weight, ds, c))
         self.attacker_model.update()
 

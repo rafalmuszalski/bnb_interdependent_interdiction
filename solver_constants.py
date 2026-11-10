@@ -2,7 +2,6 @@
 
 EPS = 1e-5               # tolerance when comparing objective values and bounds
 BINARY_THRESHOLD = 0.5   # a binary variable above this counts as 1
-BIG_M = 1e5              # big-M in the cuts; also the value of an infeasible defender/protector
 
 # FL only
 DISTANCE_PENALTY = 1e3   # defender's reward per survivor served; the distance is subtracted from it
