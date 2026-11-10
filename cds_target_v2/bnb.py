@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Optional
 
-from .constants import EPS
+from solver_constants import EPS
 from .model import LimitReached, NodeCutoff, ThreeLevelGame
 
 log = logging.getLogger("bnb")

@@ -23,7 +23,7 @@ from typing import Optional
 
 from gurobipy import GRB
 
-from .constants import EPS
+from solver_constants import EPS
 from .model import LimitReached, NodeCutoff, ThreeLevelGame
 
 log = logging.getLogger("bnb")

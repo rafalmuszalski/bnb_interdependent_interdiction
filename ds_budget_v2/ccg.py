@@ -18,7 +18,7 @@ from time import perf_counter
 import gurobipy as gp
 from gurobipy import GRB
 
-from .constants import BINARY_THRESHOLD, EPS
+from solver_constants import BINARY_THRESHOLD, EPS
 from .instance import Instance
 from .bnb import Solution
 from .model import LimitReached, ThreeLevelGame

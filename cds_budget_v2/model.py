@@ -4,7 +4,7 @@ from time import perf_counter
 import gurobipy as gp
 from gurobipy import GRB
 
-from .constants import BIG_M, BINARY_THRESHOLD, EPS, GUROBI_SEED, SOFT_MEM_LIMIT_GB, THREADS
+from solver_constants import BIG_M, BINARY_THRESHOLD, EPS, GUROBI_SEED, SOFT_MEM_LIMIT_GB, THREADS
 from .instance import Instance
 
 
