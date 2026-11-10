@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Run cds_budget_v2.main on a few example instances, one after another.
 # Logs go to cds_budget_v2/experiments/<start time MMDD_HHMM_SS>/<instance index 000, 001, ...>_{bnb,nodes,ccg}.log
+# plus console.log: the console output of all runs, each line stamped YYYY-MM-DD HH:MM:SS
 # Usage (from anywhere):  ./cds_budget_v2/run_examples.sh
 set -eo pipefail
 
@@ -26,7 +27,6 @@ echo "Logs: cds_budget_v2/experiments/$EXPERIMENT_ID"
 run_id=0
 for params in "${PARAMS[@]}"; do
   for seed in "${SEEDS[@]}"; do
-    echo "=== [$run_id] $params --seed $seed"
     export RUN_ID="$run_id"
     $PYTHON -m cds_budget_v2.main $params --seed "$seed"
     echo

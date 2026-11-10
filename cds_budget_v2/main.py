@@ -4,6 +4,7 @@ import json
 import logging
 import math
 import os
+import sys
 import traceback
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +15,9 @@ from .instance import small_world_clique
 from .model import ThreeLevelGame
 
 EXPERIMENTS_DIR = Path(__file__).parent / "experiments"
+TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"   # ISO 8601, e.g. 2026-11-10 14:32:05
+
+console = logging.getLogger("console")
 
 
 def parse_args():
@@ -40,6 +44,16 @@ def log_to_file(name: str, path: Path):
     handler.setFormatter(logging.Formatter("%(message)s"))
     logger.addHandler(handler)
     logger.propagate = False
+
+
+def setup_console(path: Path):
+    """The `console` logger prints to stdout and appends to `path`, every line timestamped."""
+    console.setLevel(logging.INFO)
+    console.propagate = False
+    formatter = logging.Formatter("%(asctime)s %(message)s", datefmt=TIMESTAMP_FORMAT)
+    for handler in (logging.StreamHandler(sys.stdout), logging.FileHandler(path, mode="a")):
+        handler.setFormatter(formatter)
+        console.addHandler(handler)
 
 
 def solver_stats(name: str, solver, game: ThreeLevelGame) -> dict:
@@ -88,7 +102,9 @@ def main():
     log_to_file("bnb", Path(f"{prefix}_bnb.log"))
     log_to_file("nodes", Path(f"{prefix}_nodes.log"))
     log_to_file("ccg", Path(f"{prefix}_ccg.log"))
-    print(f"Logs: {prefix}")
+    setup_console(experiment_dir / "console.log")  # shared by all runs of the experiment
+    console.info(f"=== [{run_id}] {' '.join(sys.argv[1:])}")
+    console.info(f"Logs: {prefix}")
 
     record = {
         "experiment_id": experiment_id,
@@ -116,16 +132,17 @@ def main():
                               strategy_propagation=args.strategy_propagation)
         bnb = BranchAndBound(game, time_limit=args.time_limit)
         sol = bnb.solve()
-        print(f"BnB  {bnb.status}  value {sol.weight:g}  policy {sol.policy}  attack {sol.attack}  "
+        console.info(f"BnB  {bnb.status}  value {sol.weight:g}  policy {sol.policy}  attack {sol.attack}  "
               f"structure {sol.structure}  ({len(bnb.nodes)} nodes, {bnb.time:.1f}s)")
 
         if not args.bnb_only:
             ccg = CCG(inst, time_limit=args.time_limit)
             sol = ccg.solve()
-            print(f"CCG  {ccg.status}  value {sol.weight:g}  policy {sol.policy}  attack {sol.attack}  "
+            console.info(f"CCG  {ccg.status}  value {sol.weight:g}  policy {sol.policy}  attack {sol.attack}  "
                   f"structure {sol.structure}  ({ccg.iterations} iterations, {ccg.time:.1f}s)")
     except BaseException:
         record["error"] = traceback.format_exc()
+        console.error(record["error"].rstrip())
         raise
     finally:
         if bnb is not None:
