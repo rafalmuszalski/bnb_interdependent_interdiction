@@ -82,7 +82,7 @@ class BranchAndBound:
     # -------------------------------------------------------------------------
 
     def solve(self) -> Solution:
-        start = perf_counter()
+        start = self.game.created  # the clock starts when the game's models are built
         log.info(f"{'Node':>6} {'Parent':>6} {'Depth':>5} {'Var':>4} {'Fix':>3} {'Status':>6} "
                  f"{'Value':>9} | {'LB':>9} {'UB':>9} {'Gap':>9} {'Open':>5} {'Time(s)':>9}")
         node_log.info(f"{'Node':>6} {'Parent':>6} {'Var':>4} {'Fix':>3} {'Status':>6} {'Value':>9} | "

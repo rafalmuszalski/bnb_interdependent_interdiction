@@ -22,6 +22,7 @@ class NodeCutoff(Exception):
 class ThreeLevelGame:
     def __init__(self, inst: Instance, threads: int = THREADS, soft_mem_limit_gb: float = SOFT_MEM_LIMIT_GB,
                  structure_propagation: int = -1, strategy_propagation: int = -1):
+        self.created = perf_counter()
         self.inst = inst
         self.M = BIG_M
         self.deadline = float("inf")  # perf_counter() time by which every solve must finish

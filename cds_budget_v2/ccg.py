@@ -134,7 +134,7 @@ class CCG(ThreeLevelGame):
 
     def solve(self) -> Solution:
         """Returns the best solution found (also kept in self.best)."""
-        start = perf_counter()
+        start = self.created  # the clock starts when the models are built
         policy = []
 
         log.info(f"{'It':>4} | {'P.Cols':^6}  {'P.Rows':^6} | {'LB':^8}  {'D.Value':^8} | "
