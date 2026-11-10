@@ -1,13 +1,15 @@
 """Tables from stats.jsonl:  python postprocess.py path/to/stats.jsonl   (run.sh calls it at the end)
 Saves summary.xlsx next to the stats file, with two sheets:
     runs                 every line of stats.jsonl, one row per run
-    condensed_overview   summary_table(): avg/max per (n, b_p, b_a)"""
+    condensed_overview   summary_table(): avg/max per setting (e.g. n, b_p, b_a)"""
 import sys
 from pathlib import Path
 
 import pandas as pd
 
-GROUP = ["n", "b_p", "b_a"]
+# Settings a summary row is grouped by; each problem uses the ones its stats have
+# (n, b_p, b_a for the graph problems; V, U, K, R, b_p, b_a, anti_symmetry for FL)
+GROUP_CANDIDATES = ["n", "V", "U", "K", "R", "b_p", "b_a", "anti_symmetry"]
 
 SUMMARY_COLUMNS = [
     "bnb_nodes", "bnb_strategies_added", "bnb_structures_added", "bnb_defender_cache_hits", "bnb_gap",
@@ -20,21 +22,23 @@ SUMMARY_COLUMNS = [
 
 
 def summary_table(df: pd.DataFrame) -> pd.DataFrame:
-    """One row per (n, b_p, b_a): avg and max of each BnB and CCG statistic (e.g. bnb_time_avg), and the number of instances."""
+    """One row per setting: avg and max of each BnB and CCG statistic (e.g. bnb_time_avg), and the number of instances.
+    Statistics a problem doesn't have (e.g. ccg_* for BnB-only problems) are left out."""
+    group = [c for c in GROUP_CANDIDATES if c in df]
     df = df.copy()
     # Ratios are computed per run, then aggregated: avg is the mean of the per-run ratios,
     # not avg time / avg nodes. A run with 0 iterations gets NaN instead of inf.
     df["bnb_time_per_node"] = df.get("bnb_time") / df.get("bnb_nodes")
     if "ccg_time" in df:
         df["ccg_time_per_iteration"] = df["ccg_time"] / df["ccg_iterations"].replace(0, float("nan"))
-    df = df.reindex(columns=GROUP + SUMMARY_COLUMNS)  # missing columns (e.g. --bnb_only runs) become NaN
-    groups = df.groupby(GROUP)
+    df = df.reindex(columns=group + SUMMARY_COLUMNS)  # missing columns (e.g. --bnb_only runs) become NaN
+    groups = df.groupby(group)
 
     table = groups[SUMMARY_COLUMNS].agg(["mean", "max"])
     table = table.rename(columns={"mean": "avg"}, level=1)
     table[("instances", "")] = groups.size()
     table.columns = [f"{stat}_{agg}" if agg else stat for stat, agg in table.columns]  # flat header
-    return table.reset_index()
+    return table.dropna(axis=1, how="all").reset_index()
 
 
 if __name__ == "__main__":
