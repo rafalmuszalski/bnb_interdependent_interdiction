@@ -18,6 +18,7 @@
 #   NNN_*.log      per-run logs (NNN = run id 000, 001, ...)
 #   console.log    console output of all runs, each line timestamped
 #   stats.jsonl    one line of statistics per run
+#   tableN.sh      copy of the table file that was run
 #   summary.xlsx   built by postprocess.py at the end
 set -eo pipefail
 
@@ -51,11 +52,12 @@ else
   runs_per_line=1
 fi
 
-export EXPERIMENT_ID="$(date +%m%d_%H%M_%S)"
+export EXPERIMENT_ID="${EXPERIMENT_ID:-$(date +%m%d_%H%M_%S)}"   # run_all.sh sets its own
 export RUN_TOTAL=$(( ${#PARAMS[@]} * runs_per_line ))   # for the [k/total] progress in the console
 experiment_dir="$problem/experiments/$EXPERIMENT_ID"
 mkdir -p "$experiment_dir"
 echo "$(date '+%Y-%m-%d %H:%M:%S') Running $relative" > "$experiment_dir/console.log"
+cp "$table" "$experiment_dir/"   # the exact PARAMS/SEEDS run; postprocess.py reads the table name from it
 echo "Problem: $problem"
 echo "Table:   $relative ($RUN_TOTAL runs)"
 echo "Logs:    $experiment_dir"

@@ -9,3 +9,5 @@ logs/
 *.log
 *.jsonl
 *.xlsx
+experiments/
+results/
