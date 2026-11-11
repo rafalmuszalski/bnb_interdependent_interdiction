@@ -13,5 +13,5 @@ DEFENDER_MIP_GAP_ABS = 0.5  # integer objective: an absolute gap below 1 proves 
 OBJ_TOL = 0.5            # objective values are integers: values within this are equal
 
 GUROBI_SEED = 1          # Gurobi's own random seed: fixed, so --seed only changes the instance
-THREADS = 8              # Gurobi threads per model
+THREADS = 4              # Gurobi threads per model
 SOFT_MEM_LIMIT_GB = 16   # Gurobi soft memory limit; a solve that hits it stops with mem_limit

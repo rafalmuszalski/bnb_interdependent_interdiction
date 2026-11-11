@@ -3,7 +3,7 @@
 #
 # Usage (from anywhere):  ./run_all.sh
 #
-# Each table runs through run.sh, so its experiment folder is <problem>/experiments/<STAMP>_<table>/.
+# Each table runs through run_par.sh (parallel workers on socket 0; Linux only), so its experiment folder is <problem>/experiments/<STAMP>_<table>/.
 # At the end (also after a crash or Ctrl+C) every table that has results goes into
 # results/all_<STAMP>.xlsx, one raw sheet per table (t1, t2, ...).
 # A table that fails doesn't stop the others.
@@ -36,5 +36,5 @@ for table in "${TABLES[@]}"; do
   id="${stamp}_${name}"
   stats_files+=("${table%%/*}/experiments/$id/stats.jsonl")
   echo "======== $table  ($(date '+%Y-%m-%d %H:%M:%S'))"
-  EXPERIMENT_ID="$id" ./run.sh "$table" || echo "$table failed"
+  EXPERIMENT_ID="$id" ./run_par.sh "$table" || echo "$table failed"
 done
