@@ -18,14 +18,14 @@ cd "$root"
 PYTHON="${PYTHON:-.venv/bin/python}"
 
 TABLES=(
-  cds_budget_v2/table1.sh
-  ds_budget_v2/table2.sh
-  ds_budget_v2/table3.sh
+  # cds_budget_v2/table1.sh
+  # ds_budget_v2/table2.sh
+  # ds_budget_v2/table3.sh
   cds_target_v2/table4.sh
   fl_v2/table5.sh
   fl_v2/table6.sh
-  ds_budget_v2/table7.sh
-  ds_budget_v2/table8.sh
+  # ds_budget_v2/table7.sh
+  # ds_budget_v2/table8.sh
 )
 
 # ---- Pick the tables ----
