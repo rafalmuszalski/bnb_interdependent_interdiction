@@ -158,8 +158,9 @@ class BranchAndBound:
         g.set_structure_cuts(blocked=blocked_crews)
         g.update_strategy_cuts()
 
-        # Stop the protector solve as soon as its bound shows this node can't beat the incumbent
-        g.protector_model.Params.Cutoff = max(self.lower_bound, -GRB.INFINITY)
+        # Stop the protector solve as soon as its bound shows this node can't beat the incumbent.
+        # LB + EPS (maximizing): a node that can only match the incumbent holds at best an alternative optimum
+        g.protector_model.Params.Cutoff = max(self.lower_bound + EPS, -GRB.INFINITY)
         try:
             node.policy, node.attack, node.allocation, node.location, node.bound = g.solve_three_level_game()
         except NodeCutoff:
