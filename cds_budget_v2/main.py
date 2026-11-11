@@ -148,9 +148,15 @@ def main():
             sol = ccg.solve()
             console.info(f"CCG  {ccg.status}  value {sol.weight:g}  policy {sol.policy}  attack {sol.attack}  "
                   f"structure {sol.structure}  ({ccg.iterations} iterations, {ccg.time:.1f}s)")
-    except BaseException:
+    except KeyboardInterrupt:  # Ctrl+C: not an error, so not in err.stderr; marked so postprocess.py drops the run
+        record["error"] = "KeyboardInterrupt"
+        raise
+    except Exception:
         record["error"] = traceback.format_exc()
         console.error(record["error"].rstrip())
+        with open(experiment_dir / "err.stderr", "a") as f:  # every error of the experiment, next to its other logs
+            f.write(f"{datetime.now().strftime(TIMESTAMP_FORMAT)} run {run_id:03d}: {' '.join(sys.argv[1:])}\n"
+                    f"{record['error']}\n")
         raise
     finally:
         if bnb is not None:

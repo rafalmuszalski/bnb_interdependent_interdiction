@@ -62,7 +62,7 @@ echo "Problem: $problem"
 echo "Table:   $relative ($RUN_TOTAL runs)"
 echo "Logs:    $experiment_dir"
 
-# Build summary.xlsx when the script ends: after the last run, or early on a crash or Ctrl+C
+# Build summary.xlsx when the script ends: after the last run, or early on Ctrl+C
 # (then it covers the runs that finished). Skipped if no run finished.
 postprocess() {
   if [[ -f "$experiment_dir/stats.jsonl" ]]; then
@@ -70,11 +70,16 @@ postprocess() {
   fi
 }
 trap postprocess EXIT
+# Ctrl+C stops the whole table, however the run exited (Gurobi catches Ctrl+C itself, so
+# Python may exit like a crash rather than with KeyboardInterrupt).
+trap 'echo "Interrupted"; exit 130' INT TERM
 
 # ---- Run ----
+# A run that crashes is logged by main.py (console.log, err.stderr, stats.jsonl) and the
+# table goes on with the next run.
 run_one() {
   export RUN_ID="$run_id"
-  $PYTHON -m "$problem.main" "$@"
+  $PYTHON -m "$problem.main" "$@" || echo "Run $run_id failed (see $experiment_dir/err.stderr)"
   echo
   run_id=$((run_id + 1))
 }
