@@ -1,11 +1,3 @@
-# Table 6: BnB on FL interdiction with (SR) and without (no SR) symmetry reduction.
-# Run with:  ./run.sh fl_v2/table6.sh   (from the repo root)
-#
-# One parameter varied at a time from (|V|,|U|,|K|,|R|,b_a) = (3,15,13,4,5): |V| in {3..6},
-# |U| in {15,18,20,23}, |K| in {13,15,17,18}, |R| in {4,6,8,9}, b_a in {5,...,8}. b_p = 4.
-# Each configuration runs with and without --anti_symmetry; the base configuration is listed once.
-# Every PARAMS line runs once per seed in SEEDS. Every parameter is explicit: nothing
-# depends on main.py defaults. postprocess.py builds the paper layout (sheet "paper_table").
 
 PARAMS=(
   "--V 3 --U 15 --K 13 --R 4 --b_p 4 --b_a 5 --strategy_propagation 0 --structure_propagation 1 --time_limit 3600 --anti_symmetry"
