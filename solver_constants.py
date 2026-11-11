@@ -9,7 +9,8 @@ MAX_NODE_WEIGHT = 300
 
 # FL only
 DISTANCE_PENALTY = 1e3   # defender's reward per survivor served; the distance is subtracted from it
-DEFENDER_MIP_GAP = 1e-8  # the defender is solved to (near) proven optimality
+DEFENDER_MIP_GAP_ABS = 0.5  # integer objective: an absolute gap below 1 proves the defender optimal
+OBJ_TOL = 0.5            # objective values are integers: values within this are equal
 
 GUROBI_SEED = 1          # Gurobi's own random seed: fixed, so --seed only changes the instance
 THREADS = 8              # Gurobi threads per model

@@ -23,7 +23,7 @@ from typing import Optional
 
 from gurobipy import GRB
 
-from solver_constants import EPS
+from solver_constants import EPS, OBJ_TOL
 from .model import LimitReached, NodeCutoff, ThreeLevelGame
 
 log = logging.getLogger("bnb")
@@ -47,7 +47,7 @@ class Node:
 
     def __lt__(self, other: "Node") -> bool:
         """Best-bound first (highest); ties go to the D.Branch (fix=0) child."""
-        if abs(self.bound - other.bound) < EPS:
+        if abs(self.bound - other.bound) < OBJ_TOL:
             return self.branch_fix < other.branch_fix
         return self.bound > other.bound
 
@@ -129,7 +129,7 @@ class BranchAndBound:
             self.update_bounds()
             self.log_node(node, perf_counter() - start)
 
-            if self.gap <= EPS:
+            if self.upper_bound - self.lower_bound <= OBJ_TOL:
                 self.status = "optimal"
                 log.info("Optimality gap closed")
                 break
@@ -159,8 +159,8 @@ class BranchAndBound:
         g.update_strategy_cuts()
 
         # Stop the protector solve as soon as its bound shows this node can't beat the incumbent.
-        # LB + EPS (maximizing): a node that can only match the incumbent holds at best an alternative optimum
-        g.protector_model.Params.Cutoff = max(self.lower_bound + EPS, -GRB.INFINITY)
+        # LB + OBJ_TOL (maximizing, integer values): a node must reach at least LB + 1 to beat the incumbent
+        g.protector_model.Params.Cutoff = max(self.lower_bound + OBJ_TOL, -GRB.INFINITY)
         try:
             node.policy, node.attack, node.allocation, node.location, node.bound = g.solve_three_level_game()
         except NodeCutoff:
@@ -186,7 +186,7 @@ class BranchAndBound:
             heuristic = self.evaluate_policy(node.policy, blocked_crews)
         finally:
             self.heuristic_time += perf_counter() - heuristic_start
-        if heuristic.value < node.bound - EPS:
+        if heuristic.value < node.bound - OBJ_TOL:
             # The attacker over-hedged; the heuristic found the policy's true value, which
             # is a feasible solution in its own right.
             if heuristic.value > self.lower_bound:
@@ -279,7 +279,7 @@ class BranchAndBound:
 
         attack, value = g.solve_attacker(policy)
         allocation, location, d_value = g.solve_defender(attack)
-        if abs(value - d_value) > EPS:
+        if abs(value - d_value) > OBJ_TOL:
             raise ValueError(f"Heuristic A-D mismatch: attacker={value}, defender={d_value}")
         return Solution(d_value, policy, attack, allocation, location)
 

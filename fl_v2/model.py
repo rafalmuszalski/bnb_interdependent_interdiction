@@ -13,7 +13,7 @@ from time import perf_counter
 import gurobipy as gp
 from gurobipy import GRB
 
-from solver_constants import (BINARY_THRESHOLD, DEFENDER_MIP_GAP, DISTANCE_PENALTY, EPS,
+from solver_constants import (BINARY_THRESHOLD, DEFENDER_MIP_GAP_ABS, DISTANCE_PENALTY, OBJ_TOL,
                               GUROBI_SEED, SOFT_MEM_LIMIT_GB, THREADS)
 from .instance import Instance
 
@@ -83,7 +83,7 @@ class ThreeLevelGame:
         """Defender: station crews and serve survivors, maximizing DISTANCE_PENALTY * served - distance."""
         inst = self.inst
         m = gp.Model("Defender", env=self.env)
-        m.Params.MIPGap = DEFENDER_MIP_GAP
+        m.Params.MIPGapAbs = DEFENDER_MIP_GAP_ABS
 
         self.y = {(i, j): m.addVar(vtype=GRB.BINARY, name=f"y_{i}_{j}") for (i, j) in inst.edges}  # serve j from i
         self.z = {(i, k): m.addVar(vtype=GRB.BINARY, name=f"z_{i}_{k}")                              # crew k at facility i
@@ -361,7 +361,7 @@ class ThreeLevelGame:
             raise ValueError(f"Unexpected defender status: {status}")
         allocation = [e for e in self.inst.edges if self.y[e].X > BINARY_THRESHOLD]
         location = [(i, k) for (i, k) in self.z if self.z[i, k].X > BINARY_THRESHOLD]
-        value = self.defender_model.ObjVal
+        value = round(self.defender_model.ObjVal)
 
         for e in attack:
             self.y[e].UB = original_ub[e]
@@ -386,7 +386,7 @@ class ThreeLevelGame:
         if status != GRB.OPTIMAL:
             raise ValueError(f"Unexpected attacker status: {status}")
         attack = [e for e in inst.edges if self.x[e].X > BINARY_THRESHOLD]
-        value = self.attacker_model.ObjVal
+        value = round(self.attacker_model.ObjVal)
 
         for e in inst.edges:
             self.x[e].UB = 1
@@ -405,7 +405,7 @@ class ThreeLevelGame:
         status = self.protector_model.Status
         if status == GRB.OPTIMAL:
             policy = [(a, k) for (a, k) in self.w if self.w[a, k].X > BINARY_THRESHOLD]
-            value = self.protector_model.ObjVal
+            value = round(self.protector_model.ObjVal)
         elif status == GRB.INFEASIBLE:
             policy, value = [], -self.M
         elif status == GRB.CUTOFF:
@@ -431,7 +431,7 @@ class ThreeLevelGame:
         allocation, location, d_value = self.solve_defender(attack)
 
         values = (p_value, a_value, d_value)
-        if max(values) - min(values) > EPS:
+        if max(values) - min(values) > OBJ_TOL:
             raise ValueError(f"Objective mismatch: p={p_value}, a={a_value}, d={d_value}")
 
         return policy, attack, allocation, location, d_value
