@@ -5,6 +5,7 @@ __pycache__
 gurobi.log
 *.lp
 *.txt
+!requirements.txt
 logs/ 
 *.log
 *.jsonl
