@@ -13,11 +13,16 @@ cd "$root"
 PYTHON="${PYTHON:-.venv/bin/python}"
 
 TABLES=(
-  cds_budget_v2/t1_small.sh
-  cds_budget_v2/t2_small.sh
-  cds_target_v2/t3_small.sh
-  fl_v2/t4_small.sh
-  fl_v2/t5_small.sh
+  cds_budget_v2/t1.sh
+  cds_budget_v2/t2.sh
+  cds_target_v2/t3.sh
+  fl_v2/t4.sh
+  fl_v2/t5.sh
+  # cds_budget_v2/t1_small.sh
+  # cds_budget_v2/t2_small.sh
+  # cds_target_v2/t3_small.sh
+  # fl_v2/t4_small.sh
+  # fl_v2/t5_small.sh
 )
 
 stamp="$(date +%m%d_%H%M_%S)"
