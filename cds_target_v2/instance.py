@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 import networkx as nx
 
+from solver_constants import MAX_NODE_WEIGHT, MIN_NODE_WEIGHT
+
 
 @dataclass(frozen=True)
 class Instance:
@@ -60,7 +62,7 @@ def small_world_clique(n: int, clique_size: int, protectors: int, bridges: int,
     for i in G.nodes():
         G.nodes[i]["price"] = 1   # protector's cost to fortify i
         G.nodes[i]["cost"] = 1    # attacker's cost to attack i
-        G.nodes[i]["weight"] = round(rng.uniform(100, 300), 0)
+        G.nodes[i]["weight"] = round(rng.uniform(MIN_NODE_WEIGHT, MAX_NODE_WEIGHT), 0)
 
         neighbors = list(G.neighbors(i))
         rng.shuffle(neighbors)

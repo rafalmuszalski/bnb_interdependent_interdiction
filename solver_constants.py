@@ -3,6 +3,10 @@
 EPS = 1e-5               # tolerance when comparing objective values and bounds
 BINARY_THRESHOLD = 0.5   # a binary variable above this counts as 1
 
+# DS / CDS only
+MIN_NODE_WEIGHT = 100    # node weights are drawn uniformly from [MIN_NODE_WEIGHT, MAX_NODE_WEIGHT]
+MAX_NODE_WEIGHT = 300
+
 # FL only
 DISTANCE_PENALTY = 1e3   # defender's reward per survivor served; the distance is subtracted from it
 DEFENDER_MIP_GAP = 1e-8  # the defender is solved to (near) proven optimality
