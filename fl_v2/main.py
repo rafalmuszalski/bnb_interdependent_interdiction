@@ -45,11 +45,11 @@ def log_to_file(name: str, path: Path):
     logger.propagate = False
 
 
-def setup_console(path: Path):
-    """The `console` logger prints to stdout and appends to `path`, every line timestamped."""
+def setup_console(path: Path, run_id: int):
+    """The `console` logger prints to stdout and appends to `path`, every line timestamped and tagged with the run id."""
     console.setLevel(logging.INFO)
     console.propagate = False
-    formatter = logging.Formatter("%(asctime)s %(message)s", datefmt=TIMESTAMP_FORMAT)
+    formatter = logging.Formatter(f"%(asctime)s [{run_id:03d}] %(message)s", datefmt=TIMESTAMP_FORMAT)
     for handler in (logging.StreamHandler(sys.stdout), logging.FileHandler(path, mode="a")):
         handler.setFormatter(formatter)
         console.addHandler(handler)
@@ -100,7 +100,7 @@ def main():
     prefix = experiment_dir / f"{run_id:03d}"
     log_to_file("bnb", Path(f"{prefix}_bnb.log"))
     log_to_file("nodes", Path(f"{prefix}_nodes.log"))
-    setup_console(experiment_dir / "console.log")  # shared by all runs of the experiment
+    setup_console(experiment_dir / "console.log", run_id)  # shared by all runs of the experiment
     run_total = os.environ.get("RUN_TOTAL")  # set by run.sh; absent for a single run
     progress = f"{run_id + 1}/{run_total} " if run_total else ""
     console.info(f"=== [{progress}run {run_id:03d}] {' '.join(sys.argv[1:])}")
