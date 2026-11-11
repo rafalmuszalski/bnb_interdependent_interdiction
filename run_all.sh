@@ -13,9 +13,9 @@ cd "$root"
 PYTHON="${PYTHON:-.venv/bin/python}"
 
 TABLES=(
-  # cds_budget_v2/t1_small.sh
+  cds_budget_v2/t1_small.sh
   cds_budget_v2/t2_small.sh
-  # cds_target_v2/t3_small.sh
+  cds_target_v2/t3_small.sh
   # fl_v2/t4_small.sh
   # fl_v2/t5_small.sh
 )

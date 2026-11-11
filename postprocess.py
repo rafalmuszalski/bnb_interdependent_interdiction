@@ -14,8 +14,9 @@ Paper conventions (each row is one setting, all its seeds together):
     Time max   max time; TL if any run didn't finish
     Gap        mean (UB - LB) / UB in percent over the runs that didn't finish;
                – if all finished, ∞ if one of them has no lower bound
-    Speedup    CCG Time avg / BnB Time avg; ∞ if only CCG has unfinished runs, – if BnB has
-               unfinished runs or a solver didn't run
+    Speedup    Time avg of the slower method / Time avg of the faster one (t1: CCG / BnB,
+               t5: no SR / SR); ∞ if only the slower one has unfinished runs, – if the faster
+               one has unfinished runs or a solver didn't run
 A solver that didn't run (e.g. CCG with --bnb_only) gets – everywhere.
 """
 import argparse
@@ -65,7 +66,7 @@ def number(x, decimals: int):
     return round(x) if decimals == 0 else round(x, decimals)
 
 
-def mean_of(name: str, decimals: int = 0):
+def mean_of(name: str, decimals: int = 1):
     return lambda runs, s: number(stat(runs, f"{s}_{name}").mean(), decimals)
 
 
@@ -85,12 +86,59 @@ def time_max(runs, s):
     return TL if not solved(runs, s).all() else number(stat(runs, f"{s}_time").max(), 1)
 
 
-def speedup(runs):
-    if not (ran(runs, "bnb") and ran(runs, "ccg")) or not solved(runs, "bnb").all():
+def speedup(slow, slow_s, fast, fast_s):
+    """Time avg of `slow` (runs, solver prefix) / Time avg of `fast`. ∞ if only `slow` has
+    unfinished runs, – if `fast` has unfinished runs or either solver didn't run."""
+    if not (ran(slow, slow_s) and ran(fast, fast_s)) or not solved(fast, fast_s).all():
         return DASH
-    if not solved(runs, "ccg").all():
+    if not solved(slow, slow_s).all():
         return INF
-    return number(effective_time(runs, "ccg").mean() / effective_time(runs, "bnb").mean(), 2)
+    return number(effective_time(slow, slow_s).mean() / effective_time(fast, fast_s).mean(), 2)
+
+
+# =============================================================================
+# Checks: a table is only built if its runs are what the table assumes
+# =============================================================================
+
+def run_ids(runs: pd.DataFrame) -> str:
+    return ", ".join(str(i) for i in runs["run_id"])
+
+
+def checks(df: pd.DataFrame, group: list[str], fixed: list[str], bnb_only: bool) -> list[str]:
+    """Reasons the table can't be trusted; empty if it can.
+    group     parameters that make a row (the runs of a row differ only in the seed)
+    fixed     parameters that must have one value in every run (else rows would mix settings)
+    bnb_only  CCG must not have run; otherwise it ran in every run or in none"""
+    reasons = []
+    crashed = df[df["error"].notna()] if "error" in df else df.iloc[:0]
+    if not crashed.empty:
+        reasons.append(f"{len(crashed)} runs crashed (run_id: {run_ids(crashed)})")
+
+    for p in fixed:
+        if p in df and df[p].nunique(dropna=False) > 1:
+            values = ", ".join(str(v) for v in df[p].unique())
+            reasons.append(f"{p} should be the same in every run but takes the values {values}")
+
+    seeds = df.groupby(group)["seed"].apply(lambda s: tuple(sorted(s)))
+    if seeds.nunique() > 1:
+        reasons.append("the rows don't all have the same seeds, so they average different instances")
+    repeated = df[df.duplicated(group + ["seed"], keep=False)]
+    if not repeated.empty:
+        reasons.append(f"a setting ran more than once with the same seed (run_id: {run_ids(repeated)})")
+
+    bnb_ran, ccg_ran = stat(df, "bnb_status").notna(), stat(df, "ccg_status").notna()
+    if not bnb_ran.all():
+        reasons.append(f"BnB has no results for run_id: {run_ids(df[~bnb_ran])}")
+    if bnb_only and ccg_ran.any():
+        reasons.append(f"CCG ran but this table has no CCG columns (run_id: {run_ids(df[ccg_ran])})")
+    if not bnb_only and ccg_ran.any() and not ccg_ran.all():
+        reasons.append(f"CCG ran in some runs but not in run_id: {run_ids(df[~ccg_ran])}")
+    return reasons
+
+
+def not_generated(table: str, reasons: list[str]) -> pd.DataFrame:
+    """A sheet with a single cell that says why the table wasn't built."""
+    return pd.DataFrame(columns=[f"{table} not generated: " + " | ".join(reasons)])
 
 
 # =============================================================================
@@ -98,7 +146,13 @@ def speedup(runs):
 # =============================================================================
 
 def t1_final(df: pd.DataFrame) -> pd.DataFrame:
-    """Table 1 (CDS, budget): BnB vs CCG per (n, b_p, b_a)."""
+    """Table 1 (CDS, budget): BnB vs CCG per (n, b_p, b_a), averaged over the seeds."""
+    group = ["n", "b_p", "b_a"]
+    reasons = checks(df, group, fixed=["k", "protectors", "bridges", "strategy_propagation",
+                                       "structure_propagation", "no_cache"], bnb_only=False)
+    if reasons:
+        return not_generated("t1_final", reasons)
+
     columns = {
         "BnB |N|":      ("bnb", mean_of("nodes")),
         "BnB L'_a":     ("bnb", mean_of("strategies_distinct")),
@@ -114,11 +168,11 @@ def t1_final(df: pd.DataFrame) -> pd.DataFrame:
         "CCG Time max": ("ccg", time_max),
     }
     rows = []
-    for (n, b_p, b_a), runs in df.groupby(["n", "b_p", "b_a"], sort=True):
+    for (n, b_p, b_a), runs in df.groupby(group, sort=True):
         row = {"n": n, "b_p": b_p, "b_a": b_a}
         for header, (s, cell) in columns.items():
             row[header] = cell(runs, s) if ran(runs, s) else DASH
-        row["Speedup"] = speedup(runs)
+        row["Speedup"] = speedup(runs, "ccg", runs, "bnb")
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -128,35 +182,38 @@ PROPAGATION = {"strategy_propagation": {-1: "N", 0: "B"}, "structure_propagation
 
 def t2_final(df: pd.DataFrame) -> pd.DataFrame:
     """Table 2 (CDS, budget, propagation): BnB time split and subproblem calls per
-    (n, b_p, b_a) and propagation type, averaged over the seeds. Times add up:
+    (n, b_p, b_a), propagation type and caching, averaged over the seeds. Times add up:
     Total = O + Strat. + Time P + Time A + Time D. Not built if any run didn't finish."""
+    df = df.copy()
+    df["no_cache"] = df["no_cache"].fillna(False) if "no_cache" in df else False  # runs from before the flag cached
+    group = ["n", "b_p", "b_a", "strategy_propagation", "structure_propagation", "no_cache"]
+    reasons = checks(df, group, fixed=["k", "protectors", "bridges"], bnb_only=True)
     unfinished = df[df["bnb_status"] != "optimal"]
     if not unfinished.empty:
         runs = ", ".join(f"{r.run_id} ({r.bnb_status})" for r in unfinished.itertuples())
-        return pd.DataFrame(columns=[
-            f"t2_final not generated: {len(unfinished)} of {len(df)} runs did not solve to optimality "
-            f"(run_id: {runs}). Every run in this table should finish, so this should not happen; "
-            f"the times and counts of unfinished runs could be corrupted, so the table is not generated."])
+        reasons.append(
+            f"{len(unfinished)} of {len(df)} runs did not solve to optimality (run_id: {runs}). Every run in "
+            f"this table should finish, so this should not happen; the times and counts of unfinished runs "
+            f"could be corrupted")
+    if reasons:
+        return not_generated("t2_final", reasons)
 
-    df = df.copy()
-    df["no_cache"] = df["no_cache"].fillna(False) if "no_cache" in df else False  # runs from before the flag cached
     df["bnb_overhead"] = (stat(df, "bnb_time") - stat(df, "bnb_strategies_time") - stat(df, "bnb_protector_time")
                           - stat(df, "bnb_attacker_time") - stat(df, "bnb_defender_time"))
     df["bnb_defender_solves"] = stat(df, "bnb_defender_calls") - stat(df, "bnb_defender_cache_hits")
     columns = {                                      # header -> (stat, decimals)
-        "|N|":      ("bnb_nodes", 0),
+        "|N|":      ("bnb_nodes", 1),
         "Total":    ("bnb_time", 1),
         "O":        ("bnb_overhead", 1),
         "Strat.":   ("bnb_strategies_time", 1),
         "Time P":   ("bnb_protector_time", 1),
         "Time A":   ("bnb_attacker_time", 1),
         "Time D":   ("bnb_defender_time", 1),
-        "Calls A":  ("bnb_attacker_calls", 0),
-        "Calls D":  ("bnb_defender_solves", 0),
-        "D cached": ("bnb_defender_cache_hits", 0),
+        "Calls A":  ("bnb_attacker_calls", 1),
+        "Calls D":  ("bnb_defender_solves", 1),
+        "D cached": ("bnb_defender_cache_hits", 1),
     }
     rows = []
-    group = ["n", "b_p", "b_a", "strategy_propagation", "structure_propagation", "no_cache"]
     for (n, b_p, b_a, p, a, no_cache), runs in df.groupby(group, sort=True):  # sorted: NN, NB, NL, BB, BL; cache first
         row = {"n": n, "b_p": b_p, "b_a": b_a,
                "P": PROPAGATION["strategy_propagation"][p], "A": PROPAGATION["structure_propagation"][a],
@@ -167,7 +224,104 @@ def t2_final(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-FINAL = {"t1": t1_final, "t2": t2_final}
+def t3_final(df: pd.DataFrame) -> pd.DataFrame:
+    """Table 3 (CDS, target): BnB per (n, r_p, b_a), averaged over the seeds. b_p in the
+    stats is the protector target r_p (percent of the attack damage to remove)."""
+    group = ["n", "b_p", "b_a"]
+    reasons = checks(df, group, fixed=["k", "protectors", "bridges", "strategy_propagation",
+                                       "structure_propagation"], bnb_only=True)
+    if reasons:
+        return not_generated("t3_final", reasons)
+
+    columns = {
+        "|N|":      mean_of("nodes"),
+        "L'_a":     mean_of("strategies_distinct"),
+        "L'_d":     mean_of("structures_distinct"),
+        "Gap":      gap,
+        "Time avg": time_avg,
+        "Time max": time_max,
+    }
+    rows = []
+    for (n, r_p, b_a), runs in df.groupby(group, sort=True):
+        row = {"n": n, "r_p": r_p, "b_a": b_a}
+        for header, cell in columns.items():
+            row[header] = cell(runs, "bnb")
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def t4_final(df: pd.DataFrame) -> pd.DataFrame:
+    """Table 4 (FL): BnB per (|U|, |K|, |R|, b_a), averaged over the seeds. The paper splits
+    it by |U| and states |V| and b_p in the caption; here they are columns."""
+    group = ["V", "U", "K", "R", "b_p", "b_a"]
+    reasons = checks(df, group, fixed=["V", "b_p", "strategy_propagation", "structure_propagation",
+                                       "anti_symmetry"], bnb_only=True)
+    if reasons:
+        return not_generated("t4_final", reasons)
+
+    columns = {
+        "|N|":      mean_of("nodes"),
+        "L'_a":     mean_of("strategies_distinct"),
+        "L'_d":     mean_of("structures_distinct"),
+        "Gap":      gap,
+        "Time avg": time_avg,
+        "Time max": time_max,
+    }
+    rows = []
+    for (V, U, K, R, b_p, b_a), runs in df.groupby(group, sort=True):
+        row = {"|V|": V, "|U|": U, "|K|": K, "|R|": R, "b_p": b_p, "b_a": b_a}
+        for header, cell in columns.items():
+            row[header] = cell(runs, "bnb")
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def t5_final(df: pd.DataFrame) -> pd.DataFrame:
+    """Table 5 (FL, symmetry reduction): BnB with SR (--anti_symmetry) vs without, averaged
+    over the seeds. One parameter is varied at a time around a base setting (the most common
+    value of each parameter); one block of rows per varied parameter, in the paper's order,
+    each including the base setting. SR and no SR runs of a setting are matched by its
+    parameters; the checks make sure both exist with the same seeds."""
+    params = {"V": "|V|", "U": "|U|", "K": "|K|", "R": "|R|", "b_a": "b_a"}  # varied, in block order
+    setting = list(params) + ["b_p"]
+    reasons = checks(df, setting + ["anti_symmetry"], fixed=["b_p", "strategy_propagation", "structure_propagation"],
+                     bnb_only=True)
+    variants = df.groupby(setting)["anti_symmetry"].nunique()
+    if (variants < 2).any():
+        reasons.append(f"settings with only SR or only no SR runs, so they can't be compared: "
+                       f"{', '.join(str(k) for k in variants[variants < 2].index)} ({', '.join(setting)})")
+    base = {p: df[p].mode()[0] for p in params}
+    off_base = (df[list(params)] != pd.Series(base)).sum(axis=1)  # parameters each run varies from the base
+    if (off_base > 1).any():
+        reasons.append(f"runs vary more than one parameter from the base setting "
+                       f"{', '.join(f'{params[p]}={v}' for p, v in base.items())} (run_id: {run_ids(df[off_base > 1])})")
+    if reasons:
+        return not_generated("t5_final", reasons)
+
+    columns = {
+        "|N|":      mean_of("nodes"),
+        "Gap":      gap,
+        "Time avg": time_avg,
+        "Time max": time_max,
+    }
+    rows = []
+    for varied in params:
+        block = df[(off_base == 0) | (df[varied] != base[varied])]  # base setting + settings varying only `varied`
+        for value, runs in block.groupby(varied, sort=True):
+            sr, no_sr = runs[runs["anti_symmetry"].astype(bool)], runs[~runs["anti_symmetry"].astype(bool)]
+            row = {"Varied": params[varied]}
+            row.update({header: value if p == varied else base[p] for p, header in params.items()})
+            row["b_p"] = runs["b_p"].iloc[0]
+            for header, cell in columns.items():
+                row[f"SR {header}"] = cell(sr, "bnb")
+            for header, cell in columns.items():
+                row[f"no SR {header}"] = cell(no_sr, "bnb")
+            row["Speedup"] = speedup(no_sr, "bnb", sr, "bnb")
+            rows.append(row)
+    return pd.DataFrame(rows)
+
+
+FINAL = {"t1": t1_final, "t2": t2_final, "t3": t3_final, "t4": t4_final, "t5": t5_final}
 
 
 if __name__ == "__main__":
