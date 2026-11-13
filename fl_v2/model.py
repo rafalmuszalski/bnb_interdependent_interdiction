@@ -215,7 +215,7 @@ class ThreeLevelGame:
         """What serving over edge e adds to the defender's value: P - distance > 0."""
         return self.inst.penalty - self.inst.distances[e]
 
-    def allocation_value(self, allocation) -> float:
+    def allocation_value(self, allocation) -> int:
         """Value of serving exactly `allocation`: the sum of its edge worths."""
         return sum(self.edge_worth(e) for e in allocation)
 

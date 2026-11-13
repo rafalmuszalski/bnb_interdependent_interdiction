@@ -178,7 +178,6 @@ class ThreeLevelGame:
         m.addConstr(gp.quicksum(G.nodes[i]["price"] * self.w[i] for i in G.nodes()) <= self.inst.b_p,
                     name="protector_budget")
 
-        # Initial bound: no attack at all is always an option for the attacker
         # Initial bound: no attack at all is always an option for the attacker. BnB only
         # tightens y bounds, which can only raise the defender's value, so this stays valid.
         _, no_attack_weight = self.solve_defender(attack=[])
