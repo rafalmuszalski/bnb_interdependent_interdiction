@@ -31,6 +31,7 @@ def parse_args():
     p.add_argument("--seed",                  type=int,   default=1,   help="Random seed")
     p.add_argument("--time_limit",            type=float, default=60*60*1, help="Time limit in seconds")
     p.add_argument("--bnb_only",              action="store_true",     help="Run only BnB, skip CCG")
+    p.add_argument("--no_cache",              action="store_true",     help="Don't cache defender solves")
     p.add_argument("--protectors",            type=int,   default=2,   help="Protectors per node within a clique")
     p.add_argument("--bridges",               type=int,   default=4,   help="Max inter-clique bridges per pair of cliques")
     return p.parse_args()
@@ -71,6 +72,8 @@ def solver_stats(name: str, solver, game: ThreeLevelGame) -> dict:
         "protector_time":      game.solve_time["protector"],
         "attacker_time":       game.solve_time["attacker"],
         "defender_time":       game.solve_time["defender"],
+        "strategies_time":     game.solve_time["strategies"],  # updating kept strategy cuts (BnB)
+        "attacker_calls":      game.attacker_calls,
         "defender_calls":      game.defender_calls,
         "defender_cache_hits": game.defender_cache_hits,
         "strategies_added":    game.strategies_added,
@@ -119,6 +122,7 @@ def main():
         "b_a":           args.b_a,
         "protectors":    args.protectors,
         "bridges":       args.bridges,
+        "no_cache":      args.no_cache,
         "seed":          args.seed,
         "time_limit":    args.time_limit,
         "structure_propagation": args.structure_propagation,
@@ -133,20 +137,26 @@ def main():
                                   bridges=args.bridges, b_p=args.b_p, b_a=args.b_a, seed=args.seed)
 
         game = ThreeLevelGame(inst, structure_propagation=args.structure_propagation,
-                              strategy_propagation=args.strategy_propagation)
+                              strategy_propagation=args.strategy_propagation, use_cache=not args.no_cache)
         bnb = BranchAndBound(game, time_limit=args.time_limit)
         sol = bnb.solve()
         console.info(f"BnB  {bnb.status}  value {sol.weight:g}  policy {sol.policy}  attack {sol.attack}  "
               f"structure {sol.structure}  ({bnb.nodes_explored} nodes explored, {bnb.time:.1f}s)")
 
         if not args.bnb_only:
-            ccg = CCG(inst, time_limit=args.time_limit)
+            ccg = CCG(inst, time_limit=args.time_limit, use_cache=not args.no_cache)
             sol = ccg.solve()
             console.info(f"CCG  {ccg.status}  value {sol.weight:g}  policy {sol.policy}  attack {sol.attack}  "
                   f"structure {sol.structure}  ({ccg.iterations} iterations, {ccg.time:.1f}s)")
-    except BaseException:
+    except KeyboardInterrupt:  # Ctrl+C: not an error, so not in err.stderr; marked so postprocess.py drops the run
+        record["error"] = "KeyboardInterrupt"
+        raise
+    except Exception:
         record["error"] = traceback.format_exc()
         console.error(record["error"].rstrip())
+        with open(experiment_dir / "err.stderr", "a") as f:  # every error of the experiment, next to its other logs
+            f.write(f"{datetime.now().strftime(TIMESTAMP_FORMAT)} run {run_id:03d}: {' '.join(sys.argv[1:])}\n"
+                    f"{record['error']}\n")
         raise
     finally:
         if bnb is not None:

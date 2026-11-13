@@ -21,7 +21,7 @@ class NodeCutoff(Exception):
 
 class ThreeLevelGame:
     def __init__(self, inst: Instance, threads: int = THREADS, soft_mem_limit_gb: float = SOFT_MEM_LIMIT_GB,
-                 structure_propagation: int = -1, strategy_propagation: int = -1):
+                 structure_propagation: int = -1, strategy_propagation: int = -1, use_cache: bool = True):
         self.created = perf_counter()
         self.inst = inst
         # Value of an infeasible defender (no DS exists): above any feasible DS weight.
@@ -39,14 +39,18 @@ class ThreeLevelGame:
         self.kept_strategies = {}  # frozenset(attack) -> constr in the protector model
 
         # The defender's result depends only on which vertices it can't use
+        self.use_cache = use_cache  # False: every defender call is a Gurobi solve
         self.defender_cache = {}   # frozenset(unavailable vertices) -> (ds, weight)
         self.defender_calls = 0       # every solve_defender() call
         self.defender_cache_hits = 0  # calls answered from defender_cache (no Gurobi solve)
+        self.attacker_calls = 0       # every solve_attacker() call (always a Gurobi solve)
 
         # Statistics. Solve times are exclusive: time spent in nested solves (inside a
-        # callback) goes to the nested model, not its parent.
-        self.solve_time = {"protector": 0.0, "attacker": 0.0, "defender": 0.0}
+        # callback) goes to the nested model, not its parent. "strategies" is the wall time of
+        # update_strategy_cuts, including its defender solves (which then don't count as "defender").
+        self.solve_time = {"protector": 0.0, "attacker": 0.0, "defender": 0.0, "strategies": 0.0}
         self._nested_time = []         # stack: time of solves nested in each running solve
+        self._time_as = None           # while set, optimize() books solves under this name instead
         self.strategies_added = 0      # critical strategy cuts (protector), every time one is added
         self.structures_added = 0      # critical structure cuts (attacker), every time one is added
         self.distinct_strategies = set()
@@ -165,7 +169,7 @@ class ThreeLevelGame:
             m.optimize(guarded if callback else None)
         finally:
             elapsed = perf_counter() - start
-            self.solve_time[name] += elapsed - self._nested_time.pop()
+            self.solve_time[self._time_as or name] += elapsed - self._nested_time.pop()
             if self._nested_time:
                 self._nested_time[-1] += elapsed
 
@@ -282,14 +286,25 @@ class ThreeLevelGame:
         A kept attack's value is the cheapest DS without it, which depends on the
         current y bounds (BnB branching). Re-solve the defender for each and set the RHS,
         and the cover coefficients to match (the tight coefficient depends on the value).
+        All of it, defender solves included, is timed as solve_time["strategies"].
         """
-        for attack, (constr, cover) in self.kept_strategies.items():
-            _, value = self.solve_defender(list(attack))
-            constr.RHS = value
-            coef = self.strategy_coef(value)
-            for i in cover:
-                self.protector_model.chgCoeff(constr, self.w[i], coef)
-        self.protector_model.update()
+        start = perf_counter()
+        self._nested_time.append(0.0)
+        self._time_as = "strategies"
+        try:
+            for attack, (constr, cover) in self.kept_strategies.items():
+                _, value = self.solve_defender(list(attack))
+                constr.RHS = value
+                coef = self.strategy_coef(value)
+                for i in cover:
+                    self.protector_model.chgCoeff(constr, self.w[i], coef)
+            self.protector_model.update()
+        finally:
+            self._time_as = None
+            elapsed = perf_counter() - start
+            self.solve_time["strategies"] += elapsed - self._nested_time.pop()
+            if self._nested_time:
+                self._nested_time[-1] += elapsed
 
     # -------------------------------------------------------------------------
     # Solves
@@ -304,7 +319,7 @@ class ThreeLevelGame:
         """
         unavailable = frozenset(attack) | {i for i in self.inst.nodes if self.y[i].UB < BINARY_THRESHOLD}
         self.defender_calls += 1
-        if unavailable in self.defender_cache:
+        if self.use_cache and unavailable in self.defender_cache:
             self.defender_cache_hits += 1
             return self.defender_cache[unavailable]
 
@@ -328,11 +343,13 @@ class ThreeLevelGame:
             self.y[i].UB = original_ub[i]
         self.defender_model.update()
 
-        self.defender_cache[unavailable] = (ds, weight)
+        if self.use_cache:
+            self.defender_cache[unavailable] = (ds, weight)
         return ds, weight
 
     def solve_attacker(self, policy: list[int]):
         """A-D subgame for a fixed policy: nodes protected by the policy can't be attacked."""
+        self.attacker_calls += 1
         for i in policy:
             for j in self.inst.protected_by[i]:
                 self.x[j].UB = 0

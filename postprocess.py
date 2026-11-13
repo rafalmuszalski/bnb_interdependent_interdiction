@@ -14,7 +14,7 @@ Paper conventions (each row is one setting, all its seeds together):
     Time max   max time; TL if any run didn't finish
     Gap        mean (UB - LB) / UB in percent over the runs that didn't finish;
                – if all finished, ∞ if one of them has no lower bound
-    Speedup    Time avg of the slower method / Time avg of the faster one (t1: CCG / BnB,
+    Speedup    Time avg of the slower method / Time avg of the faster one (t1, a1: CCG / BnB,
                t5: no SR / SR); ∞ if only the slower one has unfinished runs, – if the faster
                one has unfinished runs or a solver didn't run
 A solver that didn't run (e.g. CCG with --bnb_only) gets – everywhere.
@@ -28,8 +28,8 @@ DASH, INF, TL = "–", "∞", "TL"
 
 
 def table_name(stats_path: Path) -> str:
-    """Stem of the table file next to the stats (e.g. t1_small), else the experiment folder."""
-    tables = sorted(stats_path.parent.glob("t*.sh"))
+    """Stem of the table file next to the stats (e.g. t1_small, a1), else the experiment folder."""
+    tables = sorted(stats_path.parent.glob("*.sh"))
     return tables[0].stem if tables else stats_path.parent.name
 
 
@@ -145,13 +145,13 @@ def not_generated(table: str, reasons: list[str]) -> pd.DataFrame:
 # Paper tables: column name in the sheet -> cell
 # =============================================================================
 
-def t1_final(df: pd.DataFrame) -> pd.DataFrame:
+def t1_final(df: pd.DataFrame, sheet: str = "t1_final") -> pd.DataFrame:
     """Table 1 (CDS, budget): BnB vs CCG per (n, b_p, b_a), averaged over the seeds."""
     group = ["n", "b_p", "b_a"]
     reasons = checks(df, group, fixed=["k", "protectors", "bridges", "strategy_propagation",
                                        "structure_propagation", "no_cache"], bnb_only=False)
     if reasons:
-        return not_generated("t1_final", reasons)
+        return not_generated(sheet, reasons)
 
     columns = {
         "BnB |N|":      ("bnb", mean_of("nodes")),
@@ -177,7 +177,12 @@ def t1_final(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-PROPAGATION = {"strategy_propagation": {-1: "N", 0: "B"}, "structure_propagation": {-1: "N", 0: "B", 1: "L"}}
+def a1_final(df: pd.DataFrame) -> pd.DataFrame:
+    """Appendix Table A1 (DS, budget): same columns as Table 1."""
+    return t1_final(df, sheet="a1_final")
+
+
+PROPAGATION ={"strategy_propagation": {-1: "N", 0: "B"}, "structure_propagation": {-1: "N", 0: "B", 1: "L"}}
 
 
 def t2_final(df: pd.DataFrame) -> pd.DataFrame:
@@ -321,7 +326,7 @@ def t5_final(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-FINAL = {"t1": t1_final, "t2": t2_final, "t3": t3_final, "t4": t4_final, "t5": t5_final}
+FINAL = {"t1": t1_final, "t2": t2_final, "t3": t3_final, "t4": t4_final, "t5": t5_final, "a1": a1_final}
 
 
 if __name__ == "__main__":
