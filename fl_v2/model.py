@@ -3,7 +3,7 @@
     Protector  max pi: assigns crews to patrol regions (w[a, k]); patrolled survivors can't be cut off
     Attacker   min alpha: cuts facility->survivor edges (x[i, j]) to minimize the defender's value
     Defender   max value: stations crews at facilities (z[i, k]) and serves survivors over
-               uncut edges (y[i, j]); value = DISTANCE_PENALTY * served - total distance
+               uncut edges (y[i, j]); value = P * served - total distance, with P = inst.penalty
 
 Interdependency: a crew that patrols (protector) can't also be stationed (defender).
 ThreeLevelGame ignores it (the defender may use any crew); BranchAndBound enforces it.
@@ -13,7 +13,7 @@ from time import perf_counter
 import gurobipy as gp
 from gurobipy import GRB
 
-from solver_constants import (BINARY_THRESHOLD, DEFENDER_MIP_GAP_ABS, DISTANCE_PENALTY, OBJ_TOL,
+from solver_constants import (BINARY_THRESHOLD, MIP_GAP_ABS, OBJ_TOL,
                               GUROBI_SEED, SOFT_MEM_LIMIT_GB, THREADS)
 from .instance import Instance
 
@@ -35,7 +35,7 @@ class ThreeLevelGame:
         self.created = perf_counter()
         self.inst = inst
         # Every defender value lies in [0, pi_ub]: serving nobody is always feasible and each
-        # served edge is worth DISTANCE_PENALTY - distance > 0. pi_ub is the no-attack value.
+        # served edge is worth P - distance > 0. pi_ub is the no-attack value.
         # M = pi_ub + 1 only flags an infeasible protector (value -M); no cut uses it.
         self.pi_ub = None  # set in init_protector_model
         self.M = None
@@ -80,10 +80,11 @@ class ThreeLevelGame:
     # -------------------------------------------------------------------------
 
     def init_defender_model(self):
-        """Defender: station crews and serve survivors, maximizing DISTANCE_PENALTY * served - distance."""
+        """Defender: station crews and serve survivors, maximizing P * served - distance."""
         inst = self.inst
         m = gp.Model("Defender", env=self.env)
-        m.Params.MIPGapAbs = DEFENDER_MIP_GAP_ABS
+        m.Params.MIPGap = 0  # values are integers: stop on the absolute gap only
+        m.Params.MIPGapAbs = MIP_GAP_ABS
 
         self.y = {(i, j): m.addVar(vtype=GRB.BINARY, name=f"y_{i}_{j}") for (i, j) in inst.edges}  # serve j from i
         self.z = {(i, k): m.addVar(vtype=GRB.BINARY, name=f"z_{i}_{k}")                              # crew k at facility i
@@ -101,8 +102,7 @@ class ThreeLevelGame:
             m.addConstr(gp.quicksum(self.y[i, j] for i in inst.survivor_to_facilities[j]) <= 1,
                         name="survivor_served_once")
 
-        m.setObjective(DISTANCE_PENALTY * gp.quicksum(self.y.values())
-                       - gp.quicksum(inst.distances[e] * self.y[e] for e in inst.edges), GRB.MAXIMIZE)
+        m.setObjective(gp.quicksum(self.edge_worth(e) * self.y[e] for e in inst.edges), GRB.MAXIMIZE)
         m.update()
         self.defender_model = m
 
@@ -113,6 +113,8 @@ class ThreeLevelGame:
         """
         inst = self.inst
         m = gp.Model("Attacker", env=self.env)
+        m.Params.MIPGap = 0  # values are integers: stop on the absolute gap only
+        m.Params.MIPGapAbs = MIP_GAP_ABS
         m.Params.PreCrush = 0
         m.Params.Presolve = 0
         m.Params.Heuristics = 0
@@ -136,6 +138,8 @@ class ThreeLevelGame:
         """
         inst = self.inst
         m = gp.Model("Protector", env=self.env)
+        m.Params.MIPGap = 0  # values are integers: stop on the absolute gap only
+        m.Params.MIPGapAbs = MIP_GAP_ABS
         m.Params.PreCrush = 0
         m.Params.Presolve = 0
         m.Params.Heuristics = 0
@@ -207,9 +211,9 @@ class ThreeLevelGame:
     # Cuts
     # -------------------------------------------------------------------------
 
-    def edge_worth(self, e) -> float:
-        """What serving over edge e adds to the defender's value."""
-        return DISTANCE_PENALTY - self.inst.distances[e]
+    def edge_worth(self, e) -> int:
+        """What serving over edge e adds to the defender's value: P - distance > 0."""
+        return self.inst.penalty - self.inst.distances[e]
 
     def allocation_value(self, allocation) -> float:
         """Value of serving exactly `allocation`: the sum of its edge worths."""
@@ -361,7 +365,7 @@ class ThreeLevelGame:
             raise ValueError(f"Unexpected defender status: {status}")
         allocation = [e for e in self.inst.edges if self.y[e].X > BINARY_THRESHOLD]
         location = [(i, k) for (i, k) in self.z if self.z[i, k].X > BINARY_THRESHOLD]
-        value = round(self.defender_model.ObjVal)
+        value = self.allocation_value(allocation)  # exact integer sum, independent of Gurobi tolerances
 
         for e in attack:
             self.y[e].UB = original_ub[e]

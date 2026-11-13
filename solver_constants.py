@@ -8,8 +8,7 @@ MIN_NODE_WEIGHT = 100    # node weights are drawn uniformly from [MIN_NODE_WEIGH
 MAX_NODE_WEIGHT = 300
 
 # FL only
-DISTANCE_PENALTY = 1e3   # defender's reward per survivor served; the distance is subtracted from it
-DEFENDER_MIP_GAP_ABS = 0.5  # integer objective: an absolute gap below 1 proves the defender optimal
+MIP_GAP_ABS = 0.5        # integer objectives: an absolute gap below 1 proves optimality (MIPGap is 0)
 OBJ_TOL = 0.5            # objective values are integers: values within this are equal
 
 GUROBI_SEED = 1          # Gurobi's own random seed: fixed, so --seed only changes the instance
