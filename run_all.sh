@@ -3,7 +3,8 @@
 #
 # Usage (from anywhere):  ./run_all.sh
 #
-# Each table runs through run_par.sh (parallel workers on socket 0; Linux only), so its experiment folder is results/<STAMP>_<table>/.
+# Each table runs through run.sh (one run at a time; Linux or Mac), so its experiment folder
+# is results/<STAMP>_<table>/. For the same tables with parallel workers, use ./run_par.sh.
 # At the end (also after a crash or Ctrl+C) every table that has results goes into
 # results/all_<STAMP>.xlsx, one raw sheet per table (t1, t2, ...).
 # A table that fails doesn't stop the others.
@@ -18,11 +19,12 @@ TABLES=(
   # cds_target_v2/t3.sh
   # fl_v2/t4.sh
   # fl_v2/t5.sh
-  # cds_budget_v2/t1_small.sh
-  # cds_budget_v2/t2_small.sh
+  # ds_budget_v2/a1.sh
+  cds_budget_v2/t1_small.sh
+  cds_budget_v2/t2_small.sh
   cds_target_v2/t3_small.sh
-  # fl_v2/t4_small.sh
-  # fl_v2/t5_small.sh
+  fl_v2/t4_small.sh
+  fl_v2/t5_small.sh
 )
 
 stamp="$(date +%m%d_%H%M_%S)"
@@ -41,5 +43,5 @@ for table in "${TABLES[@]}"; do
   id="${stamp}_${name}"
   stats_files+=("results/$id/stats.jsonl")
   echo "======== $table  ($(date '+%Y-%m-%d %H:%M:%S'))"
-  EXPERIMENT_ID="$id" ./run_par.sh "$table" || echo "$table failed"
+  EXPERIMENT_ID="$id" ./run.sh "$table" || echo "$table failed"
 done

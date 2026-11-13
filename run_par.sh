@@ -4,7 +4,11 @@
 # Every worker takes the next unstarted run from a shared queue, so long runs don't hold up
 # the others. The script returns once every run has finished, then builds summary.xlsx.
 #
-# Usage (from anywhere):  ./run_par.sh <problem>/<table>.sh      e.g.  ./run_par.sh fl_v2/t4.sh
+# Usage (from anywhere):
+#   ./run_par.sh <problem>/<table>.sh   one table, e.g.  ./run_par.sh fl_v2/t4.sh
+#   ./run_par.sh                        every table in TABLES below, one after another (like
+#                                       run_all.sh, but each table with parallel workers); at
+#                                       the end all of them go into results/all_<STAMP>.xlsx
 #
 # Linux only (numactl, lscpu, flock, pgrep). THREADS in solver_constants.py should equal
 # THREADS_PER_WORKER, or Gurobi starts more threads than the worker has cores.
@@ -19,7 +23,48 @@ THREADS_PER_WORKER=4
 NODE=0   # NUMA node 0 = socket 0 on this machine
 
 root="$(cd "$(dirname "$0")" && pwd)"
-[[ $# -eq 1 ]] || { echo "Usage: $0 <problem>/<table>.sh" >&2; exit 2; }
+
+# ---- No table given: run every table in TABLES, each through this script ----
+TABLES=(
+  cds_budget_v2/t1.sh
+  cds_budget_v2/t2.sh
+  cds_target_v2/t3.sh
+  fl_v2/t4.sh
+  fl_v2/t5.sh
+  ds_budget_v2/a1.sh
+  # cds_budget_v2/t1_small.sh
+  # cds_budget_v2/t2_small.sh
+  # cds_target_v2/t3_small.sh
+  # fl_v2/t4_small.sh
+  # fl_v2/t5_small.sh
+)
+
+if [[ $# -eq 0 ]]; then
+  cd "$root"
+  PYTHON="${PYTHON:-.venv/bin/python}"
+  stamp="$(date +%m%d_%H%M_%S)"
+  stats_files=()
+
+  combine() {
+    local existing=()
+    for f in "${stats_files[@]}"; do [[ -f "$f" ]] && existing+=("$f"); done
+    [[ ${#existing[@]} -gt 0 ]] && $PYTHON postprocess.py -o "results/all_$stamp.xlsx" "${existing[@]}"
+  }
+  trap combine EXIT
+  trap 'echo "Interrupted"; exit 130' INT TERM   # Ctrl+C stops all tables, not just the current one
+
+  for table in "${TABLES[@]}"; do
+    name="$(basename "$table" .sh)"
+    id="${stamp}_${name}"
+    stats_files+=("results/$id/stats.jsonl")
+    echo "======== $table  ($(date '+%Y-%m-%d %H:%M:%S'))"
+    EXPERIMENT_ID="$id" ./run_par.sh "$table" || echo "$table failed"
+  done
+  exit 0
+fi
+
+# ---- One table ----
+[[ $# -eq 1 ]] || { echo "Usage: $0 [<problem>/<table>.sh]" >&2; exit 2; }
 [[ -f "$1" ]] || { echo "ERROR: table file not found: $1" >&2; exit 2; }
 table="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"   # absolute, before the cd below
 for cmd in numactl lscpu flock pgrep; do
