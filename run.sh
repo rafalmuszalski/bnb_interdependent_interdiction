@@ -5,7 +5,7 @@
 #
 # The problem is the top-level package the table file sits in. It must have a main.py
 # (run as `python -m <problem>.main`) that reads EXPERIMENT_ID, RUN_ID and RUN_TOTAL from
-# the environment and writes its logs and stats.jsonl to <problem>/experiments/$EXPERIMENT_ID/.
+# the environment and writes its logs and stats.jsonl to results/$EXPERIMENT_ID/ (repo root).
 # At the end, postprocess.py (repo root) turns stats.jsonl into summary.xlsx.
 #
 # The table file defines (see cds_budget_v2/table1.sh):
@@ -14,9 +14,9 @@
 #                                       Without SEEDS each line runs once, as written.
 # It is sourced (executed by bash), so keep it to PARAMS and SEEDS.
 #
-# Output goes to <problem>/experiments/<MMDD_HHMM_SS>/:
-#   NNN_*.log      per-run logs (NNN = run id 000, 001, ...)
-#   console.log    console output of all runs, each line timestamped
+# Output goes to results/<MMDD_HHMM_SS>/:
+#   logs/NNN_*.log per-run logs (NNN = run id 000, 001, ...)
+#   out.stdout     console output of all runs, each line timestamped
 #   stats.jsonl    one line of statistics per run
 #   tableN.sh      copy of the table file that was run
 #   summary.xlsx   built by postprocess.py at the end
@@ -54,9 +54,9 @@ fi
 
 export EXPERIMENT_ID="${EXPERIMENT_ID:-$(date +%m%d_%H%M_%S)}"   # run_all.sh sets its own
 export RUN_TOTAL=$(( ${#PARAMS[@]} * runs_per_line ))   # for the [k/total] progress in the console
-experiment_dir="$problem/experiments/$EXPERIMENT_ID"
+experiment_dir="results/$EXPERIMENT_ID"   # must match EXPERIMENTS_DIR in <problem>/main.py
 mkdir -p "$experiment_dir"
-echo "$(date '+%Y-%m-%d %H:%M:%S') Running $relative" > "$experiment_dir/console.log"
+echo "$(date '+%Y-%m-%d %H:%M:%S') Running $relative" > "$experiment_dir/out.stdout"
 cp "$table" "$experiment_dir/"   # the exact PARAMS/SEEDS run; postprocess.py reads the table name from it
 echo "Problem: $problem"
 echo "Table:   $relative ($RUN_TOTAL runs)"
@@ -75,7 +75,7 @@ trap postprocess EXIT
 trap 'echo "Interrupted"; exit 130' INT TERM
 
 # ---- Run ----
-# A run that crashes is logged by main.py (console.log, err.stderr, stats.jsonl) and the
+# A run that crashes is logged by main.py (out.stdout, err.stderr, stats.jsonl) and the
 # table goes on with the next run.
 run_one() {
   export RUN_ID="$run_id"

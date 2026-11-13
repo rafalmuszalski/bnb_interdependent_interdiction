@@ -74,11 +74,11 @@ done
 
 export EXPERIMENT_ID="${EXPERIMENT_ID:-$(date +%m%d_%H%M_%S)}"   # run_all.sh sets its own
 export RUN_TOTAL=${#runs[@]}   # for the [k/total] progress in the console
-experiment_dir="$problem/experiments/$EXPERIMENT_ID"
+experiment_dir="results/$EXPERIMENT_ID"   # must match EXPERIMENTS_DIR in <problem>/main.py
 mkdir -p "$experiment_dir"
-echo "$(date '+%Y-%m-%d %H:%M:%S') Running $relative ($WORKERS workers on node $NODE)" > "$experiment_dir/console.log"
+echo "$(date '+%Y-%m-%d %H:%M:%S') Running $relative ($WORKERS workers on node $NODE)" > "$experiment_dir/out.stdout"
 for (( w = 0; w < WORKERS; w++ )); do
-  echo "worker $w: CPUs ${cpusets[w]}" >> "$experiment_dir/console.log"
+  echo "worker $w: CPUs ${cpusets[w]}" >> "$experiment_dir/out.stdout"
 done
 cp "$table" "$experiment_dir/"   # the exact PARAMS/SEEDS run; postprocess.py reads the table name from it
 echo "Problem: $problem"
@@ -132,7 +132,7 @@ stop_workers() {
 trap 'echo "Interrupted"; stop_workers; exit 130' INT TERM
 
 # ---- Run ----
-# A run that crashes is logged by main.py (console.log, err.stderr, stats.jsonl) and the
+# A run that crashes is logged by main.py (out.stdout, err.stderr, stats.jsonl) and the
 # worker goes on with the next run.
 worker() {
   trap - EXIT INT TERM   # only the main script post-processes and stops workers

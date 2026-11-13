@@ -14,7 +14,7 @@ from .ccg import CCG
 from .instance import small_world_clique
 from .model import ThreeLevelGame
 
-EXPERIMENTS_DIR = Path(__file__).parent / "experiments"
+EXPERIMENTS_DIR = Path(__file__).resolve().parent.parent / "results"   # <repo root>/results
 TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"   # ISO 8601, e.g. 2026-11-10 14:32:05
 
 console = logging.getLogger("console")
@@ -98,13 +98,13 @@ def main():
     experiment_id = os.environ.get("EXPERIMENT_ID", datetime.now().strftime("%m%d_%H%M_%S"))
     run_id = int(os.environ.get("RUN_ID", 0))
     experiment_dir = EXPERIMENTS_DIR / experiment_id
-    experiment_dir.mkdir(parents=True, exist_ok=True)
+    (experiment_dir / "logs").mkdir(parents=True, exist_ok=True)   # also creates experiment_dir
 
-    prefix = experiment_dir / f"{run_id:03d}"
+    prefix = experiment_dir / "logs" / f"{run_id:03d}"   # per-run logs: logs/NNN_bnb.log, ...
     log_to_file("bnb", Path(f"{prefix}_bnb.log"))
     log_to_file("nodes", Path(f"{prefix}_nodes.log"))
     log_to_file("ccg", Path(f"{prefix}_ccg.log"))
-    setup_console(experiment_dir / "console.log", run_id)  # shared by all runs of the experiment
+    setup_console(experiment_dir / "out.stdout", run_id)  # shared by all runs of the experiment
     run_total = os.environ.get("RUN_TOTAL")  # set by run.sh; absent for a single run
     progress = f"{run_id + 1}/{run_total} " if run_total else ""
     console.info(f"=== [{progress}run {run_id:03d}] {' '.join(sys.argv[1:])}")

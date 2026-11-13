@@ -57,16 +57,16 @@ would run the experiments to generate the eight tables that appear in the paper.
 
 ### Interpreting the Results
 
-Each call to `run.sh` creates `<problem>/experiments/<MMDD_HHMM_SS>/` with:
+Each call to `run.sh` creates `results/<MMDD_HHMM_SS>/` (in the repository root) with:
 
 | File | Contents |
 |---|---|
-| `console.log` | Console output of all runs, timestamped: the table being run, each run's arguments and its BnB/CCG result. |
+| `out.stdout` | Console output of all runs, timestamped: the table being run, each run's arguments and its BnB/CCG result. |
 | `stats.jsonl` | One JSON line per run: the run's arguments and all statistics (below). |
 | `summary.xlsx` | Built from `stats.jsonl`. Sheet `runs`: one row per run. Sheet `condensed_overview`: average and maximum of the main statistics per (`n`, `b_p`, `b_a`). |
-| `NNN_bnb.log` | BnB progress of run `NNN`: one line per node with its status, value, lower/upper bound, gap and elapsed time. |
-| `NNN_nodes.log` | One line per BnB node with the protector's policy, the attacker's strategy and the defender's structure. |
-| `NNN_ccg.log` | CCG progress of run `NNN`: one line per iteration with the master size, bounds, gap and elapsed time. |
+| `logs/NNN_bnb.log` | BnB progress of run `NNN`: one line per node with its status, value, lower/upper bound, gap and elapsed time. |
+| `logs/NNN_nodes.log` | One line per BnB node with the protector's policy, the attacker's strategy and the defender's structure. |
+| `logs/NNN_ccg.log` | CCG progress of run `NNN`: one line per iteration with the master size, bounds, gap and elapsed time. |
 
 BnB node statuses: `int` (feasible for the interdependent game), `frac` (policy and structure overlap; branched), `sopt` (attacker over-hedged; branched), `infea` (no feasible structure), `kill` (cut off by the incumbent mid-solve), `prune` (bound no better than the incumbent; not solved).
 
